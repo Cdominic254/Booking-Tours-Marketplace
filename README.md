@@ -81,6 +81,10 @@ Tours can be browsed by category. Admins and vendors can edit category, itinerar
 
 Customers can book as guests or while signed in. Only bookings made while signed in are associated with a customer account and visible at `/my-bookings`. Signed-in customers can cancel or reschedule eligible bookings at least 48 hours before departure. Changes are protected by account ownership and CSRF checks. Tour reviews remain available on the tour detail page.
 
+The smart trip planner only shows real future tour departures published by an admin or vendor; it does not seed fictional availability. For proximity search, set a property's latitude/longitude and add a destination landmark tagged `beach` or `heritage` with its own coordinates. Property amenities are entered one per line in the listing editor. Distance is calculated from those coordinates, so unlocated listings are not represented as measured nearby results.
+
+Stay searches collect check-in/check-out dates and calculate a nightly quote, then open a prefilled WhatsApp request for the host to confirm availability. This is an enquiry, not a calendar reservation; the site does not take stay payment or send automated WhatsApp messages. WhatsApp remains click-to-chat until a Business API provider and credentials are configured. Tour availability and M-Pesa payments continue through the existing published-departure flow.
+
 Tour bookings are paid in KES through Safaricom Daraja Lipa Na M-Pesa Online (STK Push). A booking remains pending until its callback is checked against Daraja's STK Query API; browser redirects are not used as proof of payment. The departure remains reserved while the customer completes the M-Pesa prompt, and failed payments release the reservation. Pending payments cannot be cancelled because Daraja does not provide a reliable way to withdraw an STK prompt after it has been sent. Booking and status emails are sent when SMTP is configured. WhatsApp delivery is not enabled; the messaging service can be extended with a WhatsApp provider when credentials and provider preferences are available.
 
 ## Hosting
@@ -99,6 +103,7 @@ Configure these environment variables on the hosting provider:
 - `SESSION_COOKIE_SECURE=true` when the site is served over HTTPS
 - `RATELIMIT_STORAGE_URI`: shared Redis URL for production rate-limit state (`memory://` is only for local development and the app refuses to start in production with it)
 - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USERNAME`, `EMAIL_PASSWORD`, `EMAIL_FROM`, and `EMAIL_TO` for contact notifications
+- `WHATSAPP_BUSINESS_PHONE`: optional international number using digits only, used as the click-to-chat recipient
 - `DARAJA_ENV`: `sandbox` while testing, then `production` after go-live approval
 - `DARAJA_CONSUMER_KEY`, `DARAJA_CONSUMER_SECRET`, `DARAJA_SHORTCODE`, and `DARAJA_PASSKEY`: credentials from the Safaricom Daraja portal; keep them in secret environment settings
 - `DARAJA_CALLBACK_URL`: public HTTPS endpoint, for example `https://lamutours.co.ke/daraja/callback`
@@ -109,6 +114,14 @@ Install dependencies with `pip install -r requirements.txt`. The service should 
 Start with Daraja sandbox credentials and use a publicly reachable HTTPS callback URL. Verify successful, cancelled, and timed-out STK requests before switching `DARAJA_ENV` to `production` and using production credentials. Safaricom must approve the shortcode, passkey, and Lipa Na M-Pesa Online product for live transactions. Never commit credentials or put them in callback URLs.
 
 SQLite is suitable for local development, but many hosted platforms use ephemeral filesystems. Use managed PostgreSQL in production so bookings, users, properties, and reviews survive redeployments.
+
+## Analytics
+
+The React app records public page views with `POST /api/analytics/events` using `{ "page": "/booking.html", "source": "instagram" }`. The `source` value is optional; the client uses the first `utm_source` value or external referrer hostname as first-touch attribution. Admin and vendor pages are excluded. Visitor identifiers are random session tokens stored as SHA-256 hashes; do not add names, emails, full referrer URLs, or other personal data to analytics events.
+
+`GET /api/admin/operations` returns the dashboard analytics. The funnel and traffic-source totals cover the last 30 days; funnel visitors are distinct browser sessions and booking-page visitors are sessions that viewed `/booking.html`. Occupancy trends cover tour departure capacity from six months ago through six months ahead and use reserved seats, including pending reservations. Property revenue is all-time and includes only bookings whose property slug matches a property listing and whose payment status is `paid`; refunded payments are excluded. Existing bookings without attribution are labeled `Unattributed`.
+
+The current stay enquiry flow does not collect stay dates or paid occupancy nights, so the occupancy chart reports tour departure seat utilization rather than property-night occupancy.
 
 ## Deploy to Vercel
 
