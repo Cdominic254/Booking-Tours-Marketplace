@@ -5,6 +5,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_procfile_binds_gunicorn_to_platform_port():
+    procfile = (PROJECT_ROOT / 'Procfile').read_text()
+
+    assert '--bind 0.0.0.0:${PORT:-8000}' in procfile
+
+
 def test_vercel_config_uses_compatible_build_configuration():
     config = json.loads((PROJECT_ROOT / 'vercel.json').read_text())
 
