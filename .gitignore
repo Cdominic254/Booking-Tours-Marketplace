@@ -5,8 +5,13 @@ venv/
 frontend/node_modules/
 frontend/dist/
 .env
+.env.*
+!.env.example
+.vercel/
+*.db
 *.db-journal
 instance/
+uploads/
 .DS_Store
 
 # Local infrastructure caches and state files

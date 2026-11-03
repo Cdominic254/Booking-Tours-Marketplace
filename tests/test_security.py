@@ -1,4 +1,4 @@
-from uuid import uuid4
+import io
 
 import pytest
 
@@ -159,11 +159,46 @@ def test_currency_fetch_rejects_untrusted_urls(url):
         application._fetch_json(url)
 
 
-def test_catalog_image_upload_fails_clearly_on_vercel(monkeypatch):
-    monkeypatch.setenv('VERCEL', '1')
+def test_catalog_image_upload_uses_configured_persistent_storage_in_production(monkeypatch, tmp_path):
+    monkeypatch.setattr(application, 'IS_PRODUCTION', True)
+    monkeypatch.setattr(application, 'UPLOAD_DIR', str(tmp_path))
+    monkeypatch.setenv('UPLOAD_DIR', str(tmp_path))
+    image = b'\x89PNG\r\n\x1a\n' + b'\x00' * 8
+
+    with application.app.test_request_context(
+        '/api/vendor/uploads',
+        method='POST',
+        data={'image': (io.BytesIO(image), 'harbor.png')},
+    ):
+        response, status_code = application.save_catalog_image('vendors/1')
+
+    assert status_code == 201
+    stored_path = tmp_path / response['image_url'].removeprefix('uploads/')
+    assert stored_path.read_bytes() == image
+
+    served = application.app.test_client().get(f"/{response['image_url']}")
+    assert served.status_code == 200
+    assert served.data == image
+
+
+def test_catalog_image_upload_requires_persistent_storage_in_production(monkeypatch):
+    monkeypatch.setattr(application, 'IS_PRODUCTION', True)
+    monkeypatch.delenv('UPLOAD_DIR', raising=False)
 
     with application.app.test_request_context('/api/vendor/uploads', method='POST'):
         response, status_code = application.save_catalog_image('vendors/1')
 
     assert status_code == 503
-    assert 'persistent object storage' in response['error']
+    assert 'persistent image storage' in response['error']
+
+
+def test_catalog_image_upload_stays_disabled_on_vercel(monkeypatch, tmp_path):
+    monkeypatch.setenv('VERCEL', '1')
+    monkeypatch.setenv('UPLOAD_DIR', str(tmp_path))
+    monkeypatch.setattr(application, 'IS_PRODUCTION', True)
+    monkeypatch.setattr(application, 'UPLOAD_DIR', str(tmp_path))
+
+    with application.app.test_request_context('/api/vendor/uploads', method='POST'):
+        response, status_code = application.save_catalog_image('vendors/1')
+
+    assert status_code == 503

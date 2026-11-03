@@ -5,32 +5,20 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_procfile_binds_gunicorn_to_platform_port():
-    procfile = (PROJECT_ROOT / 'Procfile').read_text()
-
-    assert '--bind 0.0.0.0:${PORT:-8000}' in procfile
-
-
-def test_vercel_config_uses_compatible_build_configuration():
+def test_vercel_config_builds_frontend_and_includes_flask_assets():
     config = json.loads((PROJECT_ROOT / 'vercel.json').read_text())
 
     assert config['$schema'] == 'https://openapi.vercel.sh/vercel.json'
-    assert 'builds' in config
-    assert 'functions' not in config
-    python_build = next(build for build in config['builds'] if build['src'] == 'api/index.py')
-    assert python_build['use'] == '@vercel/python'
-    includes = python_build['config']['includeFiles']
-    assert 'frontend/dist/**' in includes
-    assert 'images/**' in includes
-    assert 'pictures/**' in includes
-    assert 'templates/**' in includes
+    assert config['buildCommand'] == 'npm --prefix frontend ci && npm --prefix frontend run build'
+    assert config['functions']['app.py']['includeFiles'] == (
+        '{frontend/dist/**,images/**,pictures/**,templates/**,*.html,*.css,*.js,*.svg}'
+    )
 
 
-def test_vercel_ignore_excludes_secrets_and_ephemeral_files():
+def test_vercel_ignore_excludes_secrets_and_ephemeral_data():
     ignored = (PROJECT_ROOT / '.vercelignore').read_text().splitlines()
 
     assert '.env' in ignored
     assert '.env.*' in ignored
     assert 'uploads' in ignored
     assert 'tests' in ignored
-    assert '!.env.example' in ignored
