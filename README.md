@@ -1,174 +1,92 @@
-# Lamu Tourism App – Backend
+# Lamu Tours & Booking Agency
 
-Backend service for the Lamu tourism platform, providing APIs for experience discovery, booking, payments, and operator management. Built with Python and FastAPI, designed to support a low-bandwidth-friendly Android client for tourists and operators in Lamu, Kenya.
+Booking and tour-management website for Lamu. Flask serves the application pages and APIs; the production image builds and serves the React/Vite frontend alongside the legacy HTML pages.
 
 ## Features
 
-- Experience discovery and search (by date, category, price, availability)
-- Booking management with capacity control and overbooking prevention
-- Payments integration (e.g., M-Pesa, card providers)
-- Operator onboarding and experience management
-- Role-based access (tourist, operator, admin)
-- SMS/push notifications for bookings and reminders
+- Tour discovery, availability, bookings, and customer booking lookup
+- Admin and vendor portals, catalogue management, and reviews
+- Safaricom Daraja M-Pesa STK Push payments
+- Contact submissions, optional email notifications, and currency conversion
 
 ## Tech Stack
 
-- **Language**: Python
-- **Framework**: FastAPI
-- **Database**: PostgreSQL
-- **Cache / Queue**: Redis (caching, background tasks)
-- **Deployment**: Docker on AWS ECS (or similar)
-- **Auth**: JWT/OAuth2 with role-based access
+- Python 3.12, Flask, Flask-SQLAlchemy, and Gunicorn
+- React 19 and Vite 6
+- PostgreSQL for application data and Redis for shared rate-limit state
+- Vercel Functions for the Flask app, with external PostgreSQL and Redis
+- Docker Compose and Caddy for the Oracle VM deployment option
 
-## Project Structure
+## Local Development
 
-```text
-backend/
-  app/
-    api/v1/          # API routes (experiences, bookings, payments, operators, auth)
-    core/            # Config, security, utilities
-    models/          # SQLAlchemy / ORM models
-    schemas/         # Pydantic schemas (request/response)
-    services/        # Business logic (search, booking, payments, notifications)
-    db.py            # Database connection
-    main.py          # FastAPI app entry point
-  tests/
-    api/             # API tests
-    services/        # Service layer tests
-  docs/
-    requirements.md  # Detailed requirements and traceability
-    architecture.md  # High-level design and data flows
-    api-spec.yaml    # OpenAPI spec (can be auto-generated)
-  Dockerfile
-  pyproject.toml
-  README.md
-```
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.11+  
-- Docker (optional, for containerized run)  
-- PostgreSQL  
-- Redis  
-
-### Local Development
-
-1. **Clone the repository**
-
-   ```bash
-   git clone <repo-url>
-   cd backend
-   ```
-
-2. **Set up environment variables**
-
-   Create a `.env` file in the project root:
-
-   ```env
-   DATABASE_URL=postgresql://user:password@localhost:5432/lamu_db
-   REDIS_URL=redis://localhost:6379/0
-   SECRET_KEY=your-secret-key
-   ENV=development
-   ```
-
-3. **Install dependencies**
-
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -e .
-   ```
-
-4. **Run database migrations** *(adjust to your migration tool)*
-
-   ```bash
-   # Example if using Alembic or similar
-   alembic upgrade head
-   ```
-
-5. **Start the server**
-
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-
-6. **Open API docs**
-
-   Visit: `http://localhost:8000/docs`
-
-### Running with Docker
+Use Python 3.12+ and Node.js 22+. In one terminal, create a virtual environment and start Flask:
 
 ```bash
-docker build -t lamu-backend .
-docker run --env-file .env -p 8000:8000 lamu-backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt pytest
+SECRET_KEY=dev-only-secret DATABASE_URL=sqlite:///submissions.db RATELIMIT_STORAGE_URI=memory:// SITE_URL=http://127.0.0.1:5000 PORT=5000 python app.py
 ```
+
+In a second terminal, start Vite:
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+
+Open the Vite URL printed in the terminal. The Vite development server proxies API requests to Flask on port 5000. Run the backend test suite with `pytest`.
 
 ## Configuration
 
-Key environment variables:
+Production settings are listed in `.env.example`. The app requires a persistent `SECRET_KEY`, PostgreSQL `DATABASE_URL`, and shared Redis `RATELIMIT_STORAGE_URI` when `SITE_URL` is HTTPS or `FLASK_ENV=production`. Daraja and email integrations are optional until configured. Never commit `.env` or put payment credentials in a URL.
 
-Tour bookings are paid in KES through Safaricom Daraja Lipa Na M-Pesa Online (STK Push). A booking remains pending until its callback is checked against Daraja's STK Query API; browser redirects are not used as proof of payment. The departure remains reserved while the customer completes the M-Pesa prompt, and failed payments release the reservation. Pending payments cannot be cancelled because Daraja does not provide a reliable way to withdraw an STK prompt after it has been sent. Booking and status emails are sent when SMTP is configured. WhatsApp delivery is not enabled; the messaging service can be extended with a WhatsApp provider when credentials and provider preferences are available.
+Tour bookings are paid in KES through Safaricom Daraja Lipa Na M-Pesa Online. A booking remains pending until the payment callback is checked against Daraja's STK Query API; a browser redirect is not proof of payment. Test successful, cancelled, and timed-out payments with sandbox credentials before switching `DARAJA_ENV` to `production`.
 
 ## Testing
-
-Run tests:
 
 ```bash
 pytest
 ```
 
-Configure these environment variables on the hosting provider:
+## Vercel Deployment
 
-- `SECRET_KEY`: long random value used to sign sessions
-- `DATABASE_URL`: managed PostgreSQL URL for production persistence, or SQLite for temporary/single-instance hosting
-- `SITE_URL=https://lamutours.co.ke`: canonical public site URL
-- `SESSION_COOKIE_SECURE=true` when the site is served over HTTPS
-- `RATELIMIT_STORAGE_URI`: shared Redis URL for production rate-limit state (`memory://` is only for local development and the app refuses to start in production with it)
-- `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USERNAME`, `EMAIL_PASSWORD`, `EMAIL_FROM`, and `EMAIL_TO` for contact notifications
-- `DARAJA_ENV`: `sandbox` while testing, then `production` after go-live approval
-- `DARAJA_CONSUMER_KEY`, `DARAJA_CONSUMER_SECRET`, `DARAJA_SHORTCODE`, and `DARAJA_PASSKEY`: credentials from the Safaricom Daraja portal; keep them in secret environment settings
-- `DARAJA_CALLBACK_URL`: public HTTPS endpoint, for example `https://lamutours.co.ke/daraja/callback`
-- `ADMIN_EMAIL` and `ADMIN_PASSWORD`: bootstrap the first admin account when the database has no admins
+Connect this GitHub repository to Vercel with the repository root as the project root. Vercel detects the root Flask `app.py`; `vercel.json` builds the Vite frontend and bundles the HTML templates and image assets used by Flask.
 
-Install dependencies with `pip install -r requirements.txt`. The service should run the `Procfile` command and expose the provider's `PORT` value.
+Configure these production and preview environment variables in the Vercel project settings:
 
-Start with Daraja sandbox credentials and use a publicly reachable HTTPS callback URL. Verify successful, cancelled, and timed-out STK requests before switching `DARAJA_ENV` to `production` and using production credentials. Safaricom must approve the shortcode, passkey, and Lipa Na M-Pesa Online product for live transactions. Never commit credentials or put them in callback URLs.
+- `SECRET_KEY`: long, random session-signing key
+- `DATABASE_URL`: persistent external PostgreSQL connection string
+- `RATELIMIT_STORAGE_URI`: external Redis connection URL
+- `FLASK_ENV=production`
+- `SITE_URL`: canonical HTTPS site URL
+- `DARAJA_ENV=sandbox` and Daraja credentials/callback URL while testing
+- Email settings if contact and booking emails are required
 
-## Documentation
+Vercel's function filesystem is ephemeral. Do not configure SQLite or `UPLOAD_DIR`; image upload endpoints intentionally return 503 on Vercel until persistent object storage is integrated. Bundled `images/` and `pictures/` assets continue to serve normally. Verify `/healthz`, `/readyz`, page navigation, booking, and Daraja callbacks after deployment.
 
-- **Requirements**: [`docs/requirements.md`](docs/requirements.md)  
-  Detailed functional and non-functional requirements, user personas, and traceability.
-- **Architecture**: [`docs/architecture.md`](docs/architecture.md)  
-  High-level design, data flows, and deployment overview.
-- **API Spec**: [`docs/api-spec.yaml`](docs/api-spec.yaml) or `/docs` endpoint  
-  OpenAPI/Swagger documentation for all endpoints.
+### Terraform and CI/CD
 
-## Deployment
+Terraform provisions the Vercel project; GitHub Actions deploys only after backend tests, frontend build, and Terraform validation pass.
 
-Example (AWS ECS):
+1. Create a Vercel API token, then run from the repository root:
 
-1. Build and push Docker image to ECR.
-2. Update ECS task definition with new image and env vars.
-3. Deploy new task revision.
-4. Verify health checks and logs.
-
-Adjust to your actual CI/CD pipeline.
-
-## Contributing
-
-1. Create a feature branch from `main`.
-2. Implement changes with tests and updated docs as needed.
-3. Ensure all tests pass:
    ```bash
-   pytest
+   cd infra/vercel
+   read -s -p 'Vercel API token: ' TF_VAR_vercel_api_token
+   export TF_VAR_vercel_api_token
+   terraform init
+   terraform plan
+   terraform apply
+   unset TF_VAR_vercel_api_token
+   terraform output -raw vercel_project_id
    ```
-4. Open a pull request with:
-   - Summary of changes
-   - Linked issues or requirements from `docs/requirements.md`
-   - Notes on any breaking changes
 
-## License
+   Keep the Terraform state private. The token is supplied through the environment and must not be committed.
+2. Set the production/preview environment variables in Vercel. Run `npx vercel@latest link` from the repository root; read `orgId` and `projectId` from `.vercel/project.json`.
+3. Add GitHub secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`. Set repository variable `VERCEL_DEPLOY_ENABLED=true` to enable the gated deployment job.
+4. Push to `main` for production. Same-repository pull requests create preview deployments; fork pull requests run CI only.
 
-[Add your license here, e.g., MIT, Proprietary, etc.]
+## Oracle Cloud VM Deployment
+
+For a self-managed option, the app also has a Docker Compose stack with Flask, PostgreSQL, Redis, and Caddy. Persistent volumes hold database, rate-limit, certificate, and upload data. The free Oracle VM has no automatic off-site backups or uptime guarantee; schedule backups and apply security updates.
