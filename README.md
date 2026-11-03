@@ -99,14 +99,14 @@ Configure these environment variables on the hosting provider:
 
 - `SECRET_KEY`: long random value used to sign sessions
 - `DATABASE_URL`: managed PostgreSQL URL for production persistence, or SQLite for temporary/single-instance hosting
-- `SITE_URL=https://lamutours.co.ke`: canonical public site URL
+- `SITE_URL=https://lamutours.2bd.net`: canonical public site URL
 - `SESSION_COOKIE_SECURE=true` when the site is served over HTTPS
 - `RATELIMIT_STORAGE_URI`: shared Redis URL for production rate-limit state (`memory://` is only for local development and the app refuses to start in production with it)
 - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USERNAME`, `EMAIL_PASSWORD`, `EMAIL_FROM`, and `EMAIL_TO` for contact notifications
 - `WHATSAPP_BUSINESS_PHONE`: optional international number using digits only, used as the click-to-chat recipient
 - `DARAJA_ENV`: `sandbox` while testing, then `production` after go-live approval
 - `DARAJA_CONSUMER_KEY`, `DARAJA_CONSUMER_SECRET`, `DARAJA_SHORTCODE`, and `DARAJA_PASSKEY`: credentials from the Safaricom Daraja portal; keep them in secret environment settings
-- `DARAJA_CALLBACK_URL`: public HTTPS endpoint, for example `https://lamutours.co.ke/daraja/callback`
+- `DARAJA_CALLBACK_URL`: public HTTPS endpoint, for example `https://lamutours.2bd.net/daraja/callback`
 - `ADMIN_EMAIL` and `ADMIN_PASSWORD`: bootstrap the first admin account when the database has no admins
 
 Install dependencies with `pip install -r requirements.txt`. The service should run the `Procfile` command and expose the provider's `PORT` value.
@@ -138,9 +138,9 @@ GitHub Actions runs backend tests and builds the frontend on every push and pull
 Then add the repository variable `VERCEL_DEPLOY_ENABLED` with the value `true`. Pull requests from branches in this repository deploy a Vercel Preview; pushes to `main` deploy to Production. Fork pull requests run CI but do not deploy, because GitHub does not provide repository secrets to them. Leave the variable unset to run CI without deployments. You can also run **Actions → CI/CD → Run workflow** to deploy a Preview from any branch or Production from `main`; production deployments cannot be manually triggered from another branch.
 
 1. Import this repository in the Vercel dashboard, or run `vercel` from the project directory.
-2. Add `lamutours.co.ke` to the Vercel project's **Settings → Domains** and follow Vercel's DNS instructions at your domain registrar. Set the apex domain as the primary domain; add `www.lamutours.co.ke` too if you want Vercel to redirect it.
-3. Set the project environment variables from the hosting section above, including `SITE_URL=https://lamutours.co.ke`, a Redis-backed `RATELIMIT_STORAGE_URI`, and `SESSION_COOKIE_SECURE=true`. The app refuses to start in production if the shared rate-limit store or persistent `SECRET_KEY` is missing. Configure `DATABASE_URL` with a hosted PostgreSQL connection string. Use a Redis-compatible managed store and keep its URL private.
-4. Deploy with `vercel --prod`, then confirm HTTPS works at `https://lamutours.co.ke` and set `DARAJA_CALLBACK_URL` to `https://lamutours.co.ke/daraja/callback`.
+2. Add `lamutours.2bd.net` to the Vercel project's **Settings → Domains** and follow Vercel's DNS instructions at your domain registrar. Set this hostname as the primary domain.
+3. Set the project environment variables from the hosting section above, including `SITE_URL=https://lamutours.2bd.net`, a Redis-backed `RATELIMIT_STORAGE_URI`, and `SESSION_COOKIE_SECURE=true`. The app refuses to start in production if the shared rate-limit store or persistent `SECRET_KEY` is missing. Configure `DATABASE_URL` with a hosted PostgreSQL connection string. Use a Redis-compatible managed store and keep its URL private.
+4. Deploy with `vercel --prod`, then confirm HTTPS works at `https://lamutours.2bd.net` and set `DARAJA_CALLBACK_URL` to `https://lamutours.2bd.net/daraja/callback`.
 
 Vercel must verify the domain through the DNS records it provides before the custom domain serves the deployment. Do not open the HTML files directly when testing bookings; use the deployed URL so the form can reach the Flask booking endpoint.
 

@@ -66,7 +66,7 @@ EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').lower() in ('1', 'true',
 EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').lower() in ('1', 'true', 'yes')
 whatsapp_phone = re.sub(r'\D', '', os.environ.get('WHATSAPP_BUSINESS_PHONE', ''))
 WHATSAPP_BUSINESS_PHONE = whatsapp_phone if 8 <= len(whatsapp_phone) <= 15 else ''
-SITE_URL = os.environ.get('SITE_URL', 'https://lamutours.co.ke').strip().rstrip('/')
+SITE_URL = os.environ.get('SITE_URL', 'https://lamutours.2bd.net').strip().rstrip('/')
 IS_PRODUCTION = (
     os.environ.get('FLASK_ENV', '').lower() == 'production'
     or os.environ.get('VERCEL') == '1'
