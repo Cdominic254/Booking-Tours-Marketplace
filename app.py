@@ -1,4 +1,6 @@
 import ipaddress
+import hashlib
+from io import BytesIO
 import json
 import math
 import os
@@ -18,13 +20,16 @@ from email.message import EmailMessage
 from dotenv import load_dotenv
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask import Flask, redirect, render_template, request, send_from_directory, render_template_string, session
+from flask import Flask, redirect, render_template, request, send_file, send_from_directory, render_template_string, session
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 from sqlalchemy import case, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 from saas.extensions import db
+from saas.modules.analytics.models import AnalyticsEvent
 from saas.modules.bookings.models import Booking, BookingDispute
 from saas.modules.bookings.daraja import (
     DarajaError,
@@ -59,7 +64,9 @@ EMAIL_FROM = os.environ.get('EMAIL_FROM', EMAIL_USERNAME)
 EMAIL_TO = os.environ.get('EMAIL_TO', 'info@lamutours.com')
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').lower() in ('1', 'true', 'yes')
 EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').lower() in ('1', 'true', 'yes')
-SITE_URL = os.environ.get('SITE_URL', 'https://lamutours.co.ke').strip().rstrip('/')
+whatsapp_phone = re.sub(r'\D', '', os.environ.get('WHATSAPP_BUSINESS_PHONE', ''))
+WHATSAPP_BUSINESS_PHONE = whatsapp_phone if 8 <= len(whatsapp_phone) <= 15 else ''
+SITE_URL = os.environ.get('SITE_URL', 'https://lamutours.2bd.net').strip().rstrip('/')
 IS_PRODUCTION = (
     os.environ.get('FLASK_ENV', '').lower() == 'production'
     or os.environ.get('VERCEL') == '1'
@@ -90,6 +97,19 @@ limiter = Limiter(
     storage_uri=RATE_LIMIT_STORAGE_URI,
     headers_enabled=True,
 )
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    response.headers.setdefault('Permissions-Policy', 'camera=(), geolocation=(), microphone=()')
+    if app.config['SESSION_COOKIE_SECURE']:
+        response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')
+    return response
+
+
 database_url = os.environ.get('DATABASE_URL')
 if os.environ.get('VERCEL') == '1' and not database_url:
     raise RuntimeError('Configure DATABASE_URL with persistent PostgreSQL before deploying to Vercel.')
@@ -117,6 +137,12 @@ def ensure_booking_payment_columns():
             connection.execute(text('ALTER TABLE booking ADD COLUMN merchant_request_id VARCHAR(100)'))
         if 'mpesa_receipt_number' not in booking_columns:
             connection.execute(text('ALTER TABLE booking ADD COLUMN mpesa_receipt_number VARCHAR(30)'))
+        if 'payment_confirmed_at' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN payment_confirmed_at TIMESTAMP'))
+        if 'traffic_source' not in booking_columns:
+            connection.execute(text("ALTER TABLE booking ADD COLUMN traffic_source VARCHAR(120) NOT NULL DEFAULT 'Unattributed'"))
+        if 'traffic_source' not in booking_columns:
+            connection.execute(text("ALTER TABLE booking ADD COLUMN traffic_source VARCHAR(120) NOT NULL DEFAULT 'unattributed'"))
         if 'user_id' not in booking_columns:
             connection.execute(text('ALTER TABLE booking ADD COLUMN user_id INTEGER'))
         if 'schedule_id' not in booking_columns:
@@ -169,14 +195,28 @@ def get_admin_setting(key, default):
 def ensure_catalog_columns():
     inspector = db.inspect(db.engine)
     table_columns = {table: {column['name'] for column in inspector.get_columns(table)}
-                     for table in ('property', 'review', 'tour') if inspector.has_table(table)}
+                     for table in ('property', 'review', 'tour', 'destination') if inspector.has_table(table)}
     with db.engine.begin() as connection:
         if 'slug' not in table_columns.get('property', set()):
             connection.execute(text('ALTER TABLE property ADD COLUMN slug VARCHAR(160)'))
         if 'vendor_id' not in table_columns.get('property', set()):
             connection.execute(text('ALTER TABLE property ADD COLUMN vendor_id INTEGER'))
+        for column, declaration in {
+            'amenities': "TEXT NOT NULL DEFAULT ''",
+            'latitude': 'FLOAT',
+            'longitude': 'FLOAT',
+        }.items():
+            if column not in table_columns.get('property', set()):
+                connection.execute(text(f'ALTER TABLE property ADD COLUMN {column} {declaration}'))
         if 'vendor_id' not in table_columns.get('tour', set()):
             connection.execute(text('ALTER TABLE tour ADD COLUMN vendor_id INTEGER'))
+        for column, declaration in {
+            'site_type': "VARCHAR(20) NOT NULL DEFAULT 'area'",
+            'latitude': 'FLOAT',
+            'longitude': 'FLOAT',
+        }.items():
+            if column not in table_columns.get('destination', set()):
+                connection.execute(text(f'ALTER TABLE destination ADD COLUMN {column} {declaration}'))
         tour_columns = table_columns.get('tour', set())
         for column, declaration in {
             'category': "VARCHAR(100) NOT NULL DEFAULT 'Island experiences'",
@@ -384,6 +424,17 @@ def get_current_vendor():
 def auth_attempt_key():
     email = request.form.get('email', '').strip().lower()[:120]
     return f'{get_remote_address()}:{email}'
+
+
+def auth_account_key():
+    email = request.form.get('email', '').strip().lower()[:120]
+    if not email:
+        return auth_attempt_key()
+    return f'{request.path}:{email}'
+
+
+def failed_auth_attempt(response):
+    return response.status_code == 401 or 'error=' in response.headers.get('Location', '')
 
 
 def is_vendor_logged_in():
@@ -628,6 +679,7 @@ def process_daraja_callback(payload):
     booking.payment_status = 'paid'
     booking.status = 'confirmed'
     booking.mpesa_receipt_number = receipt
+    booking.payment_confirmed_at = datetime.utcnow()
     try:
         db.session.commit()
     except IntegrityError:
@@ -675,13 +727,92 @@ def send_email_notification(submission: dict) -> bool:
         return False
 
 
+def generate_booking_document(booking: Booking, document_type: str) -> bytes:
+    if document_type not in {'invoice', 'receipt'}:
+        raise ValueError('Unsupported booking document type.')
+    if document_type == 'receipt' and not booking.mpesa_receipt_number:
+        raise ValueError('A verified payment is required to generate a receipt.')
+
+    def safe_text(value):
+        return str(value or '').encode('cp1252', 'replace').decode('cp1252')
+
+    output = BytesIO()
+    document = canvas.Canvas(output, pagesize=letter)
+    document_id = f"{'INV' if document_type == 'invoice' else 'RCT'}-{booking.id:06d}"
+    issued_at = booking.payment_confirmed_at if document_type == 'receipt' else booking.created_at
+    issued_at = issued_at or datetime.utcnow()
+    document.setTitle(f'Lamu Tours {document_type.title()} {document_id}')
+    document.setFillColorRGB(0.13, 0.25, 0.22)
+    document.setFont('Helvetica-Bold', 22)
+    document.drawString(72, 730, 'Lamu Tours')
+    document.setFont('Helvetica', 10)
+    document.setFillColorRGB(0.35, 0.40, 0.37)
+    document.drawString(72, 712, safe_text(SITE_URL))
+    document.setFillColorRGB(0.13, 0.25, 0.22)
+    document.setFont('Helvetica-Bold', 18)
+    document.drawRightString(540, 730, document_type.upper())
+    document.setFont('Helvetica', 10)
+    document.drawRightString(540, 710, safe_text(document_id))
+    document.drawRightString(540, 694, safe_text(issued_at.strftime('%d %b %Y %H:%M UTC')))
+    document.setStrokeColorRGB(0.72, 0.43, 0.27)
+    document.setLineWidth(1.5)
+    document.line(72, 675, 540, 675)
+
+    rows = [
+        ('Booking reference', f'#{booking.id}'),
+        ('Customer', booking.name),
+        ('Email', booking.email),
+        ('Experience', booking.tour.replace('-', ' ').title()),
+        ('Date and time', f'{booking.date} at {booking.time} (Lamu time)'),
+        ('Guests', str(booking.guests)),
+        ('Payment status', booking.payment_status.replace('_', ' ').title()),
+    ]
+    if document_type == 'receipt':
+        rows.extend([
+            ('Payment method', 'M-Pesa'),
+            ('M-Pesa receipt', booking.mpesa_receipt_number),
+        ])
+    y = 642
+    for label, value in rows:
+        document.setFont('Helvetica', 10)
+        document.setFillColorRGB(0.35, 0.40, 0.37)
+        document.drawString(72, y, safe_text(label))
+        document.setFont('Helvetica-Bold', 10)
+        document.setFillColorRGB(0.13, 0.25, 0.22)
+        document.drawRightString(540, y, safe_text(value)[:70])
+        y -= 25
+
+    y -= 8
+    document.setStrokeColorRGB(0.86, 0.86, 0.82)
+    document.line(72, y, 540, y)
+    y -= 30
+    document.setFont('Helvetica', 10)
+    document.setFillColorRGB(0.35, 0.40, 0.37)
+    document.drawString(72, y, safe_text(f'{booking.guests} guest(s) - {booking.tour.replace("-", " ").title()}'))
+    document.setFont('Helvetica-Bold', 12)
+    document.setFillColorRGB(0.13, 0.25, 0.22)
+    document.drawRightString(540, y, f'KSh {booking.amount:,.0f}')
+    y -= 32
+    document.setFont('Helvetica-Bold', 14)
+    document.drawString(72, y, 'TOTAL')
+    document.drawRightString(540, y, f'KSh {booking.amount:,.0f}')
+
+    document.setFont('Helvetica', 9)
+    document.setFillColorRGB(0.35, 0.40, 0.37)
+    footer = 'Payment received and verified via M-Pesa.' if document_type == 'receipt' else 'Keep this invoice for your booking records.'
+    document.drawString(72, 90, safe_text(footer))
+    document.drawString(72, 74, safe_text(f'Payment reference: {booking.payment_reference}'))
+    document.save()
+    return output.getvalue()
+
+
 def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> bool:
     if not (EMAIL_HOST and EMAIL_USERNAME and EMAIL_PASSWORD and EMAIL_FROM):
         app.logger.warning('Booking confirmation email skipped: missing SMTP configuration.')
         return False
 
     message = EmailMessage()
-    message['Subject'] = f"Booking request #{booking.id} received"
+    message['Subject'] = f"Payment confirmed for booking #{booking.id}" if payment_confirmed else f"Booking request #{booking.id} received"
     message['From'] = EMAIL_FROM
     message['To'] = booking.email
     message.set_content(
@@ -692,12 +823,20 @@ def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> b
         f"Estimated total: KSh {booking.amount:,.0f}\n"
         f"Booking status: {booking.status}\n"
         + (
-            f"M-Pesa payment received and verified. Receipt: {booking.mpesa_receipt_number}\n"
+            f"M-Pesa payment received and verified. Receipt: {booking.mpesa_receipt_number}. Your invoice and receipt are attached.\n"
             if payment_confirmed
-            else "Check the M-Pesa prompt on your phone to complete payment. We will confirm your booking after Daraja verifies the payment.\n"
+            else "Check the M-Pesa prompt on your phone to complete payment. We will confirm your booking after Daraja verifies the payment. Your invoice is attached.\n"
         )
         + "\nYou can sign in at the Lamu Tours website to view and manage bookings made with your account.\n"
     )
+    try:
+        invoice = generate_booking_document(booking, 'invoice')
+        message.add_attachment(invoice, maintype='application', subtype='pdf', filename=f'Lamu-Tours-Invoice-{booking.id}.pdf')
+        if booking.mpesa_receipt_number and booking.payment_status in {'paid', 'refunded'}:
+            receipt = generate_booking_document(booking, 'receipt')
+            message.add_attachment(receipt, maintype='application', subtype='pdf', filename=f'Lamu-Tours-Receipt-{booking.id}.pdf')
+    except Exception:
+        app.logger.exception('Could not generate payment documents for booking %s.', booking.id)
     try:
         if EMAIL_USE_SSL:
             with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
@@ -784,6 +923,7 @@ def frontend_page():
 
 
 @app.route('/admin/login', methods=['GET', 'POST'])
+@limiter.limit('10 per hour', key_func=auth_account_key, methods=['POST'], deduct_when=failed_auth_attempt)
 @limiter.limit('5 per minute', key_func=auth_attempt_key, methods=['POST'])
 @limiter.limit('30 per hour', methods=['POST'])
 def admin_login():
@@ -807,6 +947,7 @@ def admin_login():
 
 
 @app.route('/vendor/login', methods=['GET', 'POST'])
+@limiter.limit('10 per hour', key_func=auth_account_key, methods=['POST'], deduct_when=failed_auth_attempt)
 @limiter.limit('5 per minute', key_func=auth_attempt_key, methods=['POST'])
 @limiter.limit('30 per hour', methods=['POST'])
 def vendor_login():
@@ -942,6 +1083,67 @@ def admin_dashboard_data():
     }
 
 
+def normalize_analytics_source(value):
+    source = str(value or '').strip()[:512]
+    if not source:
+        return 'Direct'
+
+    if '://' in source or source.startswith('//'):
+        parsed = urllib.parse.urlsplit(source if '://' in source else f'https:{source}')
+        hostname = (parsed.hostname or '').lower().removeprefix('www.')
+        site_host = (urllib.parse.urlsplit(SITE_URL).hostname or '').lower().removeprefix('www.')
+        if not hostname or hostname == site_host:
+            return 'Direct'
+        for token, label in (
+            ('google.', 'Google'), ('bing.', 'Bing'), ('facebook.', 'Facebook'),
+            ('instagram.', 'Instagram'), ('tiktok.', 'TikTok'), ('linkedin.', 'LinkedIn'),
+            ('youtube.', 'YouTube'), ('t.co', 'X'), ('twitter.', 'X'),
+        ):
+            if token in hostname:
+                return label
+        return hostname[:120]
+
+    label = re.sub(r'[^a-zA-Z0-9._ -]', '', source).strip()
+    aliases = {
+        'google': 'Google',
+        'bing': 'Bing',
+        'facebook': 'Facebook',
+        'instagram': 'Instagram',
+        'tiktok': 'TikTok',
+        'linkedin': 'LinkedIn',
+        'youtube': 'YouTube',
+        'twitter': 'X',
+        'x': 'X',
+        'direct': 'Direct',
+    }
+    return aliases.get(label.lower(), label[:120]) or 'Direct'
+
+
+@app.route('/api/analytics/events', methods=['POST'])
+@limiter.limit('120 per minute')
+def record_analytics_event():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return {'error': 'Analytics event must be JSON.'}, 400
+    page = payload.get('page')
+    if not isinstance(page, str) or not page.startswith('/') or len(page) > 160:
+        return {'error': 'A valid page path is required.'}, 400
+    if page.startswith(('/admin', '/vendor', '/dashboard')):
+        return '', 204
+
+    if 'analytics_source' not in session:
+        session['analytics_source'] = normalize_analytics_source(payload.get('source'))
+    visitor_token = session.setdefault('analytics_visitor_token', secrets.token_urlsafe(32))
+    visitor_key = hashlib.sha256(visitor_token.encode('utf-8')).hexdigest()
+    db.session.add(AnalyticsEvent(
+        visitor_key=visitor_key,
+        source=session['analytics_source'],
+        page=page,
+    ))
+    db.session.commit()
+    return '', 204
+
+
 @app.route('/api/admin/operations', methods=['GET'])
 @admin_required
 def admin_operations():
@@ -989,6 +1191,114 @@ def admin_operations():
         tour.slug: tour.name for tour in Tour.query.filter(Tour.slug.in_(report_tour_slugs)).all()
     } if report_tour_slugs else {}
 
+    period_days = 30
+    period_start = datetime.utcnow() - timedelta(days=period_days)
+    recent_events = AnalyticsEvent.query.filter(AnalyticsEvent.created_at >= period_start).all()
+    visitor_keys = {event.visitor_key for event in recent_events}
+    checkout_visitor_keys = {
+        event.visitor_key for event in recent_events if event.page == '/booking.html'
+    }
+    recent_bookings = Booking.query.filter(Booking.created_at >= period_start).all()
+    recent_paid_bookings = [booking for booking in recent_bookings if booking.payment_status == 'paid']
+
+    source_metrics = {}
+
+    def source_bucket(source):
+        return source_metrics.setdefault(source or 'Unattributed', {
+            'visitor_keys': set(),
+            'booking_requests': 0,
+            'paid_bookings': 0,
+            'paid_revenue': 0.0,
+        })
+
+    for event in recent_events:
+        source_bucket(event.source)['visitor_keys'].add(event.visitor_key)
+    for booking in recent_bookings:
+        bucket = source_bucket(booking.traffic_source)
+        bucket['booking_requests'] += 1
+        if booking.payment_status == 'paid':
+            bucket['paid_bookings'] += 1
+            bucket['paid_revenue'] += float(booking.amount or 0)
+
+    funnel_counts = [
+        len(visitor_keys),
+        len(checkout_visitor_keys),
+        len(recent_bookings),
+        len(recent_paid_bookings),
+    ]
+    funnel_labels = ['Unique visitors', 'Booking page visitors', 'Booking requests', 'Paid bookings']
+    funnel = []
+    for index, (label, count) in enumerate(zip(funnel_labels, funnel_counts)):
+        previous_count = funnel_counts[index - 1] if index else count
+        funnel.append({
+            'label': label,
+            'count': count,
+            'conversion_rate': round(count / previous_count * 100, 1) if previous_count else 0,
+        })
+
+    traffic_sources = [{
+        'source': source,
+        'visitors': len(values['visitor_keys']),
+        'booking_requests': values['booking_requests'],
+        'paid_bookings': values['paid_bookings'],
+        'paid_revenue': round(values['paid_revenue'], 2),
+        'conversion_rate': round(values['booking_requests'] / len(values['visitor_keys']) * 100, 1)
+        if values['visitor_keys'] else 0,
+    } for source, values in source_metrics.items()]
+    traffic_sources.sort(key=lambda row: (-row['visitors'], -row['booking_requests'], row['source']))
+
+    current_month = datetime.now(LAMU_TIMEZONE).replace(tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    def month_start(offset):
+        month_index = current_month.year * 12 + current_month.month - 1 + offset
+        return datetime(month_index // 12, month_index % 12 + 1, 1)
+
+    month_offsets = range(-5, 7)
+    month_starts = [month_start(offset) for offset in month_offsets]
+    occupancy = {
+        start.strftime('%Y-%m'): {'capacity': 0, 'booked_seats': 0, 'departures': 0}
+        for start in month_starts
+    }
+    schedules = TourSchedule.query.filter(
+        TourSchedule.starts_at >= month_starts[0],
+        TourSchedule.starts_at < month_start(7),
+    ).all()
+    for schedule in schedules:
+        month = occupancy.get(schedule.starts_at.strftime('%Y-%m'))
+        if month is None:
+            continue
+        month['capacity'] += schedule.capacity
+        month['booked_seats'] += schedule.booked_count
+        month['departures'] += 1
+    occupancy_trends = [{
+        'month': month,
+        **values,
+        'occupancy_rate': round(values['booked_seats'] / values['capacity'] * 100, 1)
+        if values['capacity'] else 0,
+    } for month, values in occupancy.items()]
+
+    property_slugs = [property_listing.slug for property_listing in Property.query.all() if property_listing.slug]
+    property_totals = {}
+    if property_slugs:
+        property_rows = db.session.query(
+            Booking.tour,
+            db.func.count(Booking.id),
+            db.func.coalesce(db.func.sum(case((Booking.payment_status == 'paid', 1), else_=0)), 0),
+            db.func.coalesce(db.func.sum(case((Booking.payment_status == 'paid', Booking.amount), else_=0)), 0),
+        ).filter(Booking.tour.in_(property_slugs)).group_by(Booking.tour).all()
+        property_totals = {
+            row[0]: {'bookings': row[1], 'paid_bookings': row[2], 'paid_revenue': float(row[3] or 0)}
+            for row in property_rows
+        }
+    property_revenue = [{
+        'slug': property_listing.slug,
+        'name': property_listing.name,
+        'bookings': property_totals.get(property_listing.slug, {}).get('bookings', 0),
+        'paid_bookings': property_totals.get(property_listing.slug, {}).get('paid_bookings', 0),
+        'paid_revenue': property_totals.get(property_listing.slug, {}).get('paid_revenue', 0),
+    } for property_listing in Property.query.filter(Property.slug.isnot(None)).all()]
+    property_revenue.sort(key=lambda row: (-row['paid_revenue'], row['name']))
+
     disputes = BookingDispute.query.order_by(BookingDispute.created_at.desc()).limit(100).all()
     dispute_booking_ids = {dispute.booking_id for dispute in disputes}
     dispute_bookings = {
@@ -1019,6 +1329,11 @@ def admin_operations():
             'total_bookings': Booking.query.count(),
             'paid_revenue': total_paid,
             'commission_earned': total_commission,
+            'period_days': period_days,
+            'funnel': funnel,
+            'traffic_sources': traffic_sources,
+            'occupancy_trends': occupancy_trends,
+            'property_revenue': property_revenue,
             'by_tour': [{
                 'tour': row[0],
                 'tour_name': report_tour_names.get(row[0], row[0]),
@@ -1218,15 +1533,43 @@ def tour_values(data):
     }
 
 
+def coordinate_pair(data):
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
+    if latitude in (None, '') and longitude in (None, ''):
+        return None, None
+    if latitude in (None, '') or longitude in (None, ''):
+        raise ValueError('Enter both latitude and longitude, or leave both blank.')
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Latitude and longitude must be valid numbers.') from exc
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        raise ValueError('Latitude or longitude is outside the valid range.')
+    return latitude, longitude
+
+
 def property_values(data):
     name = str(data.get('name', '')).strip()
     property_type = str(data.get('property_type', '')).strip().lower()
     location = str(data.get('location', '')).strip()
     description = str(data.get('description', '')).strip()
+    raw_amenities = data.get('amenities', '')
+    if isinstance(raw_amenities, list):
+        amenities = [str(item).strip() for item in raw_amenities if str(item).strip()]
+    elif isinstance(raw_amenities, str):
+        amenities = [item.strip() for item in raw_amenities.splitlines() if item.strip()]
+    else:
+        raise ValueError('Amenities must be a list or one item per line.')
+    amenities = list(dict.fromkeys(amenities))
+    if any(len(item) > 80 for item in amenities) or sum(map(len, amenities)) > 1500:
+        raise ValueError('Each amenity must be 80 characters or fewer and total amenities must be under 1,500 characters.')
     try:
         price = int(data.get('price_per_night', 0))
         guests = int(data.get('guests', 0))
         image_url = safe_image_url(data.get('image_url'))
+        latitude, longitude = coordinate_pair(data)
     except (TypeError, ValueError) as exc:
         raise ValueError(str(exc) or 'Price and guest capacity must be positive whole numbers.') from exc
     if not name or not location or not description or property_type not in {'hotel', 'home', 'guest house', 'villa'} or price < 1 or guests < 1:
@@ -1236,9 +1579,37 @@ def property_values(data):
         'property_type': property_type,
         'location': location,
         'description': description,
+        'amenities': '\n'.join(amenities),
+        'latitude': latitude,
+        'longitude': longitude,
         'price_per_night': price,
         'guests': guests,
         'image_url': image_url,
+    }
+
+
+def destination_values(data):
+    name = str(data.get('name', '')).strip()
+    description = str(data.get('description', '')).strip()
+    search_location = str(data.get('search_location', '')).strip()
+    site_type = str(data.get('site_type', 'area')).strip().lower()
+    try:
+        image_url = safe_image_url(data.get('image_url'))
+        latitude, longitude = coordinate_pair(data)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    if not name or not description or not search_location:
+        raise ValueError('Name, description, and search location are required.')
+    if site_type not in {'area', 'beach', 'heritage'}:
+        raise ValueError('Choose an area, beach, or heritage site type.')
+    return {
+        'name': name,
+        'description': description,
+        'search_location': search_location,
+        'site_type': site_type,
+        'image_url': image_url,
+        'latitude': latitude,
+        'longitude': longitude,
     }
 
 
@@ -1348,17 +1719,12 @@ def admin_create_destination():
     if response:
         return response
     data = admin_payload()
-    name = str(data.get('name', '')).strip()
-    description = str(data.get('description', '')).strip()
-    search_location = str(data.get('search_location', '')).strip()
     try:
-        image_url = safe_image_url(data.get('image_url'))
+        values = destination_values(data)
     except ValueError as exc:
         return {'error': str(exc)}, 400
-    if not name or not description or not search_location:
-        return {'error': 'Name, description, and search location are required.'}, 400
-    slug = unique_slug(str(data.get('slug') or name), Destination)
-    destination = Destination(slug=slug, name=name, description=description, image_url=image_url, search_location=search_location)
+    slug = unique_slug(str(data.get('slug') or values['name']), Destination)
+    destination = Destination(slug=slug, **values)
     db.session.add(destination)
     db.session.commit()
     return {'destination': destination.to_dict()}, 201
@@ -1378,17 +1744,12 @@ def admin_update_destination(slug):
         db.session.commit()
         return '', 204
     data = admin_payload()
-    name = str(data.get('name', '')).strip()
-    description = str(data.get('description', '')).strip()
-    search_location = str(data.get('search_location', '')).strip()
     try:
-        image_url = safe_image_url(data.get('image_url'))
+        values = destination_values(data)
     except ValueError as exc:
         return {'error': str(exc)}, 400
-    if not name or not description or not search_location:
-        return {'error': 'Name, description, and search location are required.'}, 400
-    destination.name, destination.description = name, description
-    destination.search_location, destination.image_url = search_location, image_url
+    for field, value in values.items():
+        setattr(destination, field, value)
     db.session.commit()
     return {'destination': destination.to_dict()}
 
@@ -1795,6 +2156,7 @@ def public_catalogue():
         'tours': [item.to_dict() for item in Tour.query.order_by(Tour.name).all()],
         'properties': [item.to_dict() for item in Property.query.order_by(Property.name).all()],
         'destinations': [item.to_dict() for item in Destination.query.order_by(Destination.name).all()],
+        'whatsapp_business_phone': WHATSAPP_BUSINESS_PHONE,
     }
 
 
@@ -1959,9 +2321,10 @@ def register():
     session['user_id'] = user.id
     session['user_name'] = user.name
     session['customer_csrf'] = secrets.token_urlsafe(32)
-    return redirect('/booking.html')
+    return redirect('/my-bookings')
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit('10 per hour', key_func=auth_account_key, methods=['POST'], deduct_when=failed_auth_attempt)
 @limiter.limit('5 per minute', key_func=auth_attempt_key, methods=['POST'])
 @limiter.limit('30 per hour', methods=['POST'])
 def login():
@@ -2292,6 +2655,7 @@ def booking_confirmation():
         'message': data.get('message', ''),
         'amount': total_amount,
         'commission_rate': float(get_admin_setting('commission_rate', 15)),
+        'traffic_source': session.get('analytics_source', 'Unattributed'),
         'payment_status': 'pending',
         'timestamp': datetime.utcnow().isoformat() + 'Z'
     }
@@ -2378,7 +2742,38 @@ def payment_status(payment_reference):
         'payment_status': booking.payment_status,
         'booking_status': booking.status,
         'mpesa_receipt_number': booking.mpesa_receipt_number,
+        'document_urls': {
+            'invoice': f'/api/payment-documents/{urllib.parse.quote(payment_reference, safe="")}/invoice',
+            'receipt': (
+                f'/api/payment-documents/{urllib.parse.quote(payment_reference, safe="")}/receipt'
+                if booking.mpesa_receipt_number and booking.payment_status in {'paid', 'refunded'}
+                else None
+            ),
+        },
     }
+
+
+@app.route('/api/payment-documents/<string:payment_reference>/<string:document_type>')
+@limiter.limit('30 per minute')
+def payment_document(payment_reference, document_type):
+    if document_type not in {'invoice', 'receipt'}:
+        return {'error': 'Payment document not found.'}, 404
+    booking = Booking.query.filter_by(payment_reference=payment_reference).first()
+    if not booking:
+        return {'error': 'Payment document not found.'}, 404
+    if document_type == 'receipt' and (
+        not booking.mpesa_receipt_number or booking.payment_status not in {'paid', 'refunded'}
+    ):
+        return {'error': 'Payment document not found.'}, 404
+
+    pdf = generate_booking_document(booking, document_type)
+    return send_file(
+        BytesIO(pdf),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=f'Lamu-Tours-{document_type.title()}-{booking.id}.pdf',
+        max_age=0,
+    )
 
 
 @app.route('/daraja/callback', methods=['POST'])

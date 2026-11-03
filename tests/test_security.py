@@ -24,6 +24,75 @@ def test_login_attempts_are_rate_limited_by_ip_and_account(application_client):
     assert responses[5].status_code == 429
 
 
+@pytest.mark.parametrize('login_path', ['/login', '/admin/login', '/vendor/login'])
+def test_login_attempts_are_rate_limited_per_account_across_ips(application_client, login_path):
+    responses = [
+        application_client.post(
+            login_path,
+            data={'email': 'target-account@example.test', 'password': 'incorrect'},
+            environ_overrides={'REMOTE_ADDR': f'203.0.113.{index + 1}'},
+        )
+        for index in range(11)
+    ]
+
+    assert [response.status_code for response in responses[:10]] == [302] * 10
+    assert responses[10].status_code == 429
+
+
+def test_successful_logins_do_not_consume_account_failure_limit(application_client):
+    email = f'{uuid4().hex}@example.test'
+    password = 'correct-password-for-test'
+    with application.app.app_context():
+        user = application.User(
+            name='Rate Limit Test',
+            email=email,
+            password_hash=application.generate_password_hash(password),
+        )
+        application.db.session.add(user)
+        application.db.session.commit()
+        user_id = user.id
+
+    try:
+        responses = [
+            application_client.post(
+                '/login',
+                data={'email': email, 'password': password},
+                environ_overrides={'REMOTE_ADDR': f'203.0.113.{index + 1}'},
+            )
+            for index in range(11)
+        ]
+
+        assert [response.status_code for response in responses] == [302] * 11
+        assert all(response.headers['Location'] == '/booking.html' for response in responses)
+    finally:
+        with application.app.app_context():
+            user = application.db.session.get(application.User, user_id)
+            if user:
+                application.db.session.delete(user)
+                application.db.session.commit()
+
+
+def test_security_headers_are_added(application_client, monkeypatch):
+    monkeypatch.setitem(application.app.config, 'SESSION_COOKIE_SECURE', True)
+
+    response = application_client.get('/healthz')
+
+    assert response.headers['X-Content-Type-Options'] == 'nosniff'
+    assert response.headers['X-Frame-Options'] == 'DENY'
+    assert response.headers['Referrer-Policy'] == 'strict-origin-when-cross-origin'
+    assert response.headers['Permissions-Policy'] == 'camera=(), geolocation=(), microphone=()'
+    assert response.headers['Strict-Transport-Security'] == 'max-age=31536000'
+
+
+def test_public_catalogue_exposes_configured_whatsapp_business_phone(application_client, monkeypatch):
+    monkeypatch.setattr(application, 'WHATSAPP_BUSINESS_PHONE', '254712345678')
+
+    response = application_client.get('/api/catalogue')
+
+    assert response.status_code == 200
+    assert response.get_json()['whatsapp_business_phone'] == '254712345678'
+
+
 def test_public_review_submissions_are_rate_limited(application_client):
     payload = {
         'reviewer_name': 'Test Reviewer',

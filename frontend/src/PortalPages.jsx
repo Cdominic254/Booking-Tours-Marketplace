@@ -207,6 +207,9 @@ const propertyFields = [
   { name: 'name', label: 'Name', required: true },
   { name: 'property_type', label: 'Type', type: 'select', options: ['hotel', 'home', 'guest house', 'villa'], required: true },
   { name: 'location', label: 'Location', required: true },
+  { name: 'amenities', label: 'Amenities (one per line)', type: 'textarea', wide: true },
+  { name: 'latitude', label: 'Latitude', type: 'number', step: 'any' },
+  { name: 'longitude', label: 'Longitude', type: 'number', step: 'any' },
   { name: 'price_per_night', label: 'Price per night (KSh)', type: 'number', min: 1, required: true },
   { name: 'guests', label: 'Guest capacity', type: 'number', min: 1, required: true },
   { name: 'image_url', label: 'Image URL or images/ path' },
@@ -216,6 +219,9 @@ const propertyFields = [
 const destinationFields = [
   { name: 'name', label: 'Name', required: true },
   { name: 'search_location', label: 'Search location', required: true },
+  { name: 'site_type', label: 'Nearby site type', type: 'select', options: ['area', 'beach', 'heritage'] },
+  { name: 'latitude', label: 'Latitude', type: 'number', step: 'any' },
+  { name: 'longitude', label: 'Longitude', type: 'number', step: 'any' },
   { name: 'image_url', label: 'Image URL or pictures/ path' },
   { name: 'description', label: 'Description', type: 'textarea', wide: true, required: true },
 ];
@@ -226,7 +232,7 @@ function DashboardField({ field, value }) {
     name: field.name,
     required: Boolean(field.required),
     ...(field.min ? { min: field.min } : {}),
-    ...(field.type === 'number' ? { step: '1' } : {}),
+    ...(field.type === 'number' ? { step: field.step || '1' } : {}),
   };
   return (
     <label className={field.wide ? 'block sm:col-span-2' : 'block'}>
@@ -487,7 +493,7 @@ function AdminAccounts({ admins, vendors, onMutation }) {
             {admins.map((admin) => (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#f5f3ed] p-4" key={admin.id}>
                 <span className="text-sm text-[#52615b]">{admin.name} · {admin.email}</span>
-                <button className="text-sm font-semibold text-red-700 hover:underline" type="button" onClick={() => deleteAdmin(admin)}>Remove</button>
+                <button className="action-danger text-sm" type="button" onClick={() => deleteAdmin(admin)}>Remove</button>
               </div>
             ))}
           </div>
@@ -502,7 +508,7 @@ function AdminAccounts({ admins, vendors, onMutation }) {
                   <strong className="block text-[#203b35]">{vendor.name}</strong>
                   {vendor.email}<span className="mt-1 block text-xs">{vendor.tour_count} tours · {vendor.property_count} properties</span>
                 </span>
-                <button className="text-sm font-semibold text-red-700 hover:underline" type="button" onClick={() => deleteVendor(vendor)}>Remove vendor</button>
+                <button className="action-danger text-sm" type="button" onClick={() => deleteVendor(vendor)}>Remove vendor</button>
               </div>
             ))}
           </div>
@@ -663,7 +669,7 @@ function AvailabilitySection({ tours, endpoint, csrfToken }) {
           <div className="rounded-xl border border-[#e9e5db] p-4" key={schedule.id}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div><p className="font-semibold text-[#203b35]">{tours.find((tour) => tour.slug === schedule.tour_slug)?.name || schedule.tour_slug}</p><p className="mt-1 text-sm text-[#66736d]">{schedule.booked_count}/{schedule.capacity} guests booked</p></div>
-              <button className="text-sm font-semibold text-red-700 hover:underline" type="button" onClick={() => remove(schedule)}>Remove</button>
+              <button className="action-danger text-sm" type="button" onClick={() => remove(schedule)}>Remove</button>
             </div>
             <form className="grid gap-3 sm:grid-cols-[1fr_10rem_auto]" onSubmit={(event) => update(schedule, event)}>
               <label><span className="field-label">Departure (Lamu time)</span><input className="field" type="datetime-local" name="starts_at" defaultValue={schedule.starts_at} required /></label>
@@ -686,7 +692,7 @@ function DashboardLoadError({ role, error, onRetry }) {
         <div className="rounded-2xl border border-red-200 bg-white p-6">
           <Notice error>{error}</Notice>
           <div className="mt-5 flex gap-4">
-            <button className="font-semibold text-[#203b35] underline" type="button" onClick={onRetry}>Try again</button>
+            <button className="action-button" type="button" onClick={onRetry}>Try again</button>
             <a className="font-semibold text-[#9a5534] underline" href={loginUrl}>Sign in</a>
           </div>
         </div>
@@ -859,6 +865,111 @@ function AdminDisputes({ disputes, onMutation }) {
   );
 }
 
+function AnalyticsBar({ label, value, max }) {
+  const numericValue = Number(value) || 0;
+  const numericMax = Math.max(Number(max) || 0, 1);
+  const width = Math.max(0, Math.min(100, numericValue / numericMax * 100));
+
+  return (
+    <div
+      className="h-2 overflow-hidden rounded-full bg-[#efeee7]"
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={numericMax}
+      aria-valuenow={numericValue}
+    >
+      <div className="h-full rounded-full bg-[#b96e45]" style={{ width: `${width}%` }} />
+    </div>
+  );
+}
+
+function AnalyticsVisuals({ analytics }) {
+  const visitorMax = analytics.funnel[0]?.count || 0;
+  const revenueMax = Math.max(...analytics.property_revenue.map((row) => row.paid_revenue), 0);
+  const locale = document.documentElement.lang === 'sw' ? 'sw-KE' : 'en-KE';
+
+  return (
+    <div className="mt-7 grid gap-x-8 gap-y-8 lg:grid-cols-2">
+      <section className="border-t border-[#e9e5db] pt-5" aria-labelledby="conversion-funnel-title">
+        <h3 id="conversion-funnel-title" className="font-semibold text-[#203b35]">Conversion funnel</h3>
+        <p className="mt-1 text-xs text-[#66736d]">Last {analytics.period_days} days · unique browser sessions</p>
+        <div className="mt-4 space-y-3">
+          {analytics.funnel.map((stage, index) => (
+            <div key={stage.label}>
+              <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+                <span className="text-[#52615b]">{stage.label}</span>
+                <span className="font-semibold tabular-nums text-[#203b35]">
+                  {formatNumber(stage.count)} <span className="font-normal text-[#66736d]">{index ? `${stage.conversion_rate}%` : ''}</span>
+                </span>
+              </div>
+              <AnalyticsBar label={`${stage.label}: ${stage.count}`} value={stage.count} max={visitorMax} />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="border-t border-[#e9e5db] pt-5" aria-labelledby="traffic-sources-title">
+        <h3 id="traffic-sources-title" className="font-semibold text-[#203b35]">Traffic sources</h3>
+        <p className="mt-1 text-xs text-[#66736d]">First-touch attribution · last {analytics.period_days} days</p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[30rem] text-left text-sm">
+            <thead className="border-b border-[#e9e5db] text-xs text-[#66736d]">
+              <tr><th className="py-2 font-medium">Source</th><th className="py-2 text-right font-medium">Visitors</th><th className="py-2 text-right font-medium">Bookings</th><th className="py-2 text-right font-medium">Paid</th></tr>
+            </thead>
+            <tbody>
+              {analytics.traffic_sources.map((source) => (
+                <tr className="border-b border-[#f0ede6]" key={source.source}>
+                  <th scope="row" className="py-2.5 font-medium text-[#203b35]">{source.source}<span className="ml-2 text-xs font-normal text-[#66736d]">{source.conversion_rate}%</span></th>
+                  <td className="py-2.5 text-right tabular-nums">{formatNumber(source.visitors)}</td>
+                  <td className="py-2.5 text-right tabular-nums">{formatNumber(source.booking_requests)}</td>
+                  <td className="py-2.5 text-right tabular-nums">KSh {formatNumber(source.paid_revenue)}</td>
+                </tr>
+              ))}
+              {analytics.traffic_sources.length === 0 && <tr><td className="py-4 text-sm text-[#66736d]" colSpan="4">Traffic data will appear as visitors use the site.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="border-t border-[#e9e5db] pt-5" aria-labelledby="occupancy-trends-title">
+        <h3 id="occupancy-trends-title" className="font-semibold text-[#203b35]">Departure occupancy trends</h3>
+        <p className="mt-1 text-xs text-[#66736d]">Booked seats ÷ published tour capacity · six months before and ahead</p>
+        <div className="mt-4 grid grid-cols-6 gap-x-2 gap-y-4 sm:grid-cols-12">
+          {analytics.occupancy_trends.map((month) => (
+            <div className="min-w-0 text-center" key={month.month}>
+              <p className="mb-1 text-xs font-semibold tabular-nums text-[#203b35]">{month.occupancy_rate}%</p>
+              <div className="flex h-20 items-end overflow-hidden rounded-t bg-[#efeee7]" role="meter" aria-label={`${month.month} tour departure occupancy`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={month.occupancy_rate}>
+                <div className="w-full bg-[#177b5b]" style={{ height: `${month.occupancy_rate}%` }} />
+              </div>
+              <p className="mt-1 truncate text-[10px] text-[#66736d]">{new Date(`${month.month}-01T12:00:00`).toLocaleDateString(locale, { month: 'short' })}</p>
+              <p className="text-[10px] tabular-nums text-[#66736d]">{month.booked_seats}/{month.capacity}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="border-t border-[#e9e5db] pt-5" aria-labelledby="property-revenue-title">
+        <h3 id="property-revenue-title" className="font-semibold text-[#203b35]">Paid revenue by property</h3>
+        <p className="mt-1 text-xs text-[#66736d]">All-time verified property bookings</p>
+        <div className="mt-4 space-y-3">
+          {analytics.property_revenue.map((property) => (
+            <div key={property.slug}>
+              <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+                <span className="truncate font-medium text-[#203b35]">{property.name}</span>
+                <span className="shrink-0 text-right tabular-nums text-[#52615b]">KSh {formatNumber(property.paid_revenue)}</span>
+              </div>
+              <AnalyticsBar label={`${property.name}: KSh ${formatNumber(property.paid_revenue)}`} value={property.paid_revenue} max={revenueMax} />
+              <p className="mt-1 text-xs text-[#66736d]">{formatNumber(property.paid_bookings)} paid booking{property.paid_bookings === 1 ? '' : 's'}</p>
+            </div>
+          ))}
+          {analytics.property_revenue.length === 0 && <p className="text-sm text-[#66736d]">Property revenue will appear after a verified property booking.</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function AdminOperationsSection() {
   const { data, loading, error, message, load, mutate } = usePortalData('/api/admin/operations');
   const [settingsError, setSettingsError] = useState('');
@@ -888,7 +999,7 @@ function AdminOperationsSection() {
           </div>
           <button className="rounded-full bg-[#203b35] px-5 py-3 text-sm font-semibold text-white" type="submit">Save settings</button>
         </form>}
-        {!loading && !data && <button className="font-semibold text-[#203b35] underline" type="button" onClick={load}>Retry loading settings</button>}
+        {!loading && !data && <button className="action-button" type="button" onClick={load}>Retry loading settings</button>}
       </SectionCard>
       {data && <AdminUserManagement customers={data.customers} vendors={data.vendors} onMutation={mutate} />}
       {data && <SectionCard title="Bookings oversight" description={`${data.bookings_truncated ? 'Showing the latest 200 bookings. ' : ''}Review bookings, cancel active reservations, manage refund reviews, and open dispute cases.`}>
@@ -898,7 +1009,7 @@ function AdminOperationsSection() {
         </div>
       </SectionCard>}
       {data && <AdminDisputes disputes={data.disputes} onMutation={mutate} />}
-      {data && <SectionCard title="Booking & revenue analytics" description="Revenue and commission totals include bookings with a successful payment only. Commission uses the rate saved when each booking was created.">
+      {data && <SectionCard title="Booking & revenue analytics" description="Conversion and traffic cover the last 30 days. Occupancy uses tour departure capacity; property revenue includes verified payments only.">
         <div className="grid gap-4 sm:grid-cols-3">
           {[
             ['All bookings', data.analytics.total_bookings],
@@ -913,6 +1024,7 @@ function AdminOperationsSection() {
           </div>)}
           {data.analytics.by_tour.length === 0 && <p className="text-sm text-[#66736d]">Analytics will appear when bookings are received.</p>}
         </div>
+        <AnalyticsVisuals analytics={data.analytics} />
       </SectionCard>}
     </>
   );

@@ -10,12 +10,12 @@ const backendPaths = [
   '/daraja',
   '/dashboard',
   '/images',
-  '/login',
+  '^/login(?:/|$)',
   '/logout',
   '/logo.svg',
   '/pictures',
   '/properties',
-  '/register',
+  '^/register(?:/|$)',
   '/review-submit',
   '/reviews',
   '/vendor',
@@ -28,5 +28,16 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: Object.fromEntries(backendPaths.map((path) => [path, 'http://127.0.0.1:5000'])),
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/three/src/renderers/shaders/ShaderChunk/')) {
+            return 'three-shader-chunks';
+          }
+        },
+      },
+    },
   },
 });
