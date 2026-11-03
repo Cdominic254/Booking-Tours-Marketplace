@@ -69,6 +69,9 @@ class Property(db.Model):
     name = db.Column(db.String(150), nullable=False)
     property_type = db.Column(db.String(50), nullable=False)
     location = db.Column(db.String(120), nullable=False)
+    amenities = db.Column(db.Text, nullable=False, default='')
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
     price_per_night = db.Column(db.Integer, nullable=False)
     guests = db.Column(db.Integer, nullable=False)
     image_url = db.Column(db.String(500), nullable=True)
@@ -82,6 +85,9 @@ class Property(db.Model):
             'name': self.name,
             'property_type': self.property_type,
             'location': self.location,
+            'amenities': self.amenities.splitlines(),
+            'latitude': self.latitude,
+            'longitude': self.longitude,
             'price_per_night': self.price_per_night,
             'guests': self.guests,
             'image_url': self.image_url,
@@ -95,6 +101,9 @@ class Destination(db.Model):
     description = db.Column(db.Text, nullable=False)
     image_url = db.Column(db.String(500), nullable=True)
     search_location = db.Column(db.String(120), nullable=False)
+    site_type = db.Column(db.String(20), nullable=False, default='area')
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -104,6 +113,9 @@ class Destination(db.Model):
             'description': self.description,
             'image_url': self.image_url,
             'search_location': self.search_location,
+            'site_type': self.site_type,
+            'latitude': self.latitude,
+            'longitude': self.longitude,
         }
 
 

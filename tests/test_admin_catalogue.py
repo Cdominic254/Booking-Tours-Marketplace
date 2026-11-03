@@ -1,3 +1,4 @@
+import hashlib
 import io
 import uuid
 from datetime import datetime, timedelta
@@ -256,6 +257,105 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
     ).status_code == 200
 
 
+def test_admin_analytics_tracks_funnel_sources_occupancy_and_property_revenue(admin_client):
+    admin, _ = admin_client
+    visitor = application.app.test_client()
+    first_event = visitor.post('/api/analytics/events', json={
+        'page': '/',
+        'source': 'https://www.instagram.com/lamutours/',
+    })
+    assert first_event.status_code == 204
+    assert application.normalize_analytics_source('instagram') == 'Instagram'
+    with visitor.session_transaction() as browser_session:
+        visitor_token = browser_session['analytics_visitor_token']
+        assert browser_session['analytics_source'] == 'Instagram'
+    visitor_key = hashlib.sha256(visitor_token.encode('utf-8')).hexdigest()
+    assert visitor.post('/api/analytics/events', json={
+        'page': '/booking.html',
+        'source': 'https://www.google.com/',
+    }).status_code == 204
+
+    slug_suffix = uuid.uuid4().hex
+    tour_slug = f'analytics-tour-{slug_suffix}'
+    property_slug = f'analytics-stay-{slug_suffix}'
+    with application.app.app_context():
+        tour = application.Tour(
+            slug=tour_slug,
+            name='Analytics tour',
+            description='Analytics occupancy fixture.',
+            duration='One hour',
+            price=1000,
+        )
+        property_listing = application.Property(
+            slug=property_slug,
+            owner_name='Analytics owner',
+            owner_email=f'{slug_suffix}@example.test',
+            name='Analytics stay',
+            property_type='guest house',
+            location='Lamu',
+            price_per_night=12000,
+            guests=4,
+            description='Analytics property revenue fixture.',
+        )
+        application.db.session.add_all([tour, property_listing])
+        application.db.session.flush()
+        departure = application.TourSchedule(
+            tour_slug=tour_slug,
+            starts_at=(datetime.now(ZoneInfo('Africa/Nairobi')).replace(tzinfo=None) + timedelta(days=4)).replace(second=0, microsecond=0),
+            capacity=6,
+            booked_count=3,
+        )
+        booking = application.Booking(
+            name='Analytics guest',
+            email=f'guest-{slug_suffix}@example.test',
+            phone='+254712345678',
+            tour=property_slug,
+            date=datetime.now().date().isoformat(),
+            time='12:00',
+            guests=1,
+            amount=12000,
+            payment_status='paid',
+            traffic_source='Instagram',
+            status='confirmed',
+        )
+        application.db.session.add_all([departure, booking])
+        application.db.session.commit()
+        target_month = departure.starts_at.strftime('%Y-%m')
+
+    try:
+        response = admin.get('/api/admin/operations')
+        assert response.status_code == 200
+        analytics = response.get_json()['analytics']
+        funnel = {stage['label']: stage for stage in analytics['funnel']}
+        assert funnel['Unique visitors']['count'] == 1
+        assert funnel['Booking page visitors']['count'] == 1
+        assert funnel['Booking requests']['count'] == 1
+        assert funnel['Paid bookings']['count'] == 1
+        source = next(row for row in analytics['traffic_sources'] if row['source'] == 'Instagram')
+        assert source['visitors'] == 1
+        assert source['booking_requests'] == 1
+        assert source['paid_revenue'] == 12000
+        occupancy = next(row for row in analytics['occupancy_trends'] if row['month'] == target_month)
+        assert occupancy['capacity'] == 6
+        assert occupancy['booked_seats'] == 3
+        assert occupancy['occupancy_rate'] == 50
+        property_row = next(row for row in analytics['property_revenue'] if row['slug'] == property_slug)
+        assert property_row['paid_bookings'] == 1
+        assert property_row['paid_revenue'] == 12000
+        with application.app.app_context():
+            event = application.AnalyticsEvent.query.filter_by(visitor_key=visitor_key).first()
+            assert event is not None
+            assert event.visitor_key != visitor_token
+    finally:
+        with application.app.app_context():
+            application.AnalyticsEvent.query.filter_by(visitor_key=visitor_key).delete()
+            application.Booking.query.filter_by(tour=property_slug).delete()
+            application.TourSchedule.query.filter_by(tour_slug=tour_slug).delete()
+            application.Property.query.filter_by(slug=property_slug).delete()
+            application.Tour.query.filter_by(slug=tour_slug).delete()
+            application.db.session.commit()
+
+
 def test_admin_pages_and_catalogue_api_require_sign_in():
     client = application.app.test_client()
 
@@ -304,12 +404,31 @@ def test_property_reviews_are_attached_to_the_selected_property(admin_client):
         'location': 'Shela',
         'price_per_night': 7000,
         'guests': 4,
+        'amenities': ['Wi-Fi', 'Beach access'],
+        'latitude': -2.29,
+        'longitude': 40.91,
         'image_url': 'pictures/187747945.jpg',
         'description': 'A test property.',
     }, headers=headers)
     assert response.status_code == 201
     listing = response.get_json()['property']
+    assert listing['amenities'] == ['Wi-Fi', 'Beach access']
+    assert listing['latitude'] == -2.29
+    assert listing['longitude'] == 40.91
     assert application.calculate_booking_price(listing['slug'], 2) == 14000
+
+    invalid_coordinates = client.put(f"/api/admin/properties/{listing['id']}", json={
+        'name': 'Test Shela Retreat',
+        'property_type': 'villa',
+        'location': 'Shela',
+        'price_per_night': 7000,
+        'guests': 4,
+        'latitude': -2.29,
+        'longitude': 200,
+        'image_url': 'pictures/187747945.jpg',
+        'description': 'A test property.',
+    }, headers=headers)
+    assert invalid_coordinates.status_code == 400
 
     response = client.post('/review-submit', json={
         'reviewer_name': 'Guest',
@@ -327,6 +446,49 @@ def test_property_reviews_are_attached_to_the_selected_property(admin_client):
 
     assert client.delete(f"/api/admin/properties/{listing['id']}", headers=headers).status_code == 204
     assert client.get('/reviews?target_type=property&target_id=' + listing['slug']).get_json()['reviews'] == []
+
+
+def test_admin_can_save_geocoded_beach_and_heritage_destinations(admin_client):
+    from uuid import uuid4
+
+    client, headers = admin_client
+    name = f'Coordinate Test Landmark {uuid4().hex}'
+    response = client.post('/api/admin/destinations', json={
+        'name': name,
+        'search_location': 'Shela',
+        'site_type': 'beach',
+        'latitude': -2.29,
+        'longitude': 40.91,
+        'description': 'A test landmark used for proximity search.',
+    }, headers=headers)
+
+    assert response.status_code == 201
+    destination = response.get_json()['destination']
+    assert destination['site_type'] == 'beach'
+    assert destination['latitude'] == -2.29
+    assert destination['longitude'] == 40.91
+
+    response = client.put(f"/api/admin/destinations/{destination['slug']}", json={
+        'name': name,
+        'search_location': 'Lamu Old Town',
+        'site_type': 'heritage',
+        'latitude': -2.27,
+        'longitude': 40.90,
+        'description': 'An updated test landmark.',
+    }, headers=headers)
+    assert response.status_code == 200
+    assert response.get_json()['destination']['site_type'] == 'heritage'
+
+    invalid = client.put(f"/api/admin/destinations/{destination['slug']}", json={
+        'name': name,
+        'search_location': 'Lamu Old Town',
+        'site_type': 'heritage',
+        'latitude': -2.27,
+        'longitude': 200,
+        'description': 'An invalid test landmark.',
+    }, headers=headers)
+    assert invalid.status_code == 400
+    assert client.delete(f"/api/admin/destinations/{destination['slug']}", headers=headers).status_code == 204
 
 
 def test_admin_can_manage_trending_destinations_and_other_admin_accounts(admin_client):

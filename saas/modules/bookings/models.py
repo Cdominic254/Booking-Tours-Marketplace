@@ -18,7 +18,9 @@ class Booking(db.Model):
     message = db.Column(db.Text, nullable=True)
     amount = db.Column(db.Float, nullable=False, default=0.0)
     commission_rate = db.Column(db.Float, nullable=False, default=15.0)
+    traffic_source = db.Column(db.String(120), nullable=False, default='unattributed')
     payment_status = db.Column(db.String(30), nullable=False, default='pending')
+    payment_confirmed_at = db.Column(db.DateTime, nullable=True)
     payment_reference = db.Column(db.String(64), nullable=True, default=lambda: secrets.token_urlsafe(32))
     checkout_request_id = db.Column(db.String(100), nullable=True)
     merchant_request_id = db.Column(db.String(100), nullable=True)
@@ -49,6 +51,7 @@ class Booking(db.Model):
             'amount': self.amount,
             'commission_rate': self.commission_rate,
             'payment_status': self.payment_status,
+            'payment_confirmed_at': self.payment_confirmed_at.isoformat() + 'Z' if self.payment_confirmed_at else None,
             'mpesa_receipt_number': self.mpesa_receipt_number,
             'refund_status': self.refund_status,
             'status': self.status,

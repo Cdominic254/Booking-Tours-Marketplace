@@ -6,6 +6,34 @@ import pytest
 
 import app as application
 
+original_send_booking_confirmation = application.send_booking_confirmation
+
+
+def test_customer_registration_opens_the_new_account():
+    email = f'new-customer-{uuid.uuid4().hex}@example.test'
+    client = application.app.test_client()
+
+    try:
+        response = client.post('/register', data={
+            'name': 'New Customer',
+            'email': email,
+            'password': 'customer-test-password',
+            'confirm_password': 'customer-test-password',
+        })
+
+        assert response.status_code == 302
+        assert response.headers['Location'].endswith('/my-bookings')
+        profile_response = client.get('/api/customer/profile')
+        assert profile_response.status_code == 200
+        assert profile_response.get_json()['customer']['name'] == 'New Customer'
+        assert profile_response.get_json()['customer']['email'] == email
+    finally:
+        with application.app.app_context():
+            user = application.User.query.filter_by(email=email).first()
+            if user:
+                application.db.session.delete(user)
+                application.db.session.commit()
+
 
 @pytest.fixture
 def customer_trip(monkeypatch):
@@ -272,6 +300,35 @@ def test_m_pesa_callback_marks_paid_only_after_daraja_query_verification(custome
         'ResultCode': '0',
         'CheckoutRequestID': f"ws_CO_{booking_data['id']}",
     })
+    sent_messages = []
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def ehlo(self):
+            pass
+
+        def login(self, *args):
+            pass
+
+        def send_message(self, message):
+            sent_messages.append(message)
+
+    monkeypatch.setattr(application, 'EMAIL_HOST', 'smtp.example.test')
+    monkeypatch.setattr(application, 'EMAIL_USERNAME', 'mailer@example.test')
+    monkeypatch.setattr(application, 'EMAIL_PASSWORD', 'test-password')
+    monkeypatch.setattr(application, 'EMAIL_FROM', 'mailer@example.test')
+    monkeypatch.setattr(application, 'EMAIL_USE_SSL', False)
+    monkeypatch.setattr(application, 'EMAIL_USE_TLS', False)
+    monkeypatch.setattr(application.smtplib, 'SMTP', FakeSMTP)
+    monkeypatch.setattr(application, 'send_booking_confirmation', original_send_booking_confirmation)
 
     result = trip['client'].post('/daraja/callback', json=callback)
 
@@ -281,6 +338,20 @@ def test_m_pesa_callback_marks_paid_only_after_daraja_query_verification(custome
         assert booking.payment_status == 'paid'
         assert booking.status == 'confirmed'
         assert booking.mpesa_receipt_number == 'TST123ABC'
+        assert booking.payment_confirmed_at is not None
+    payment_reference = response.get_json()['payment_reference']
+    documents = trip['client'].get(f'/api/payment-status/{payment_reference}').get_json()['document_urls']
+    assert documents['receipt']
+    for document_type in ('invoice', 'receipt'):
+        document = trip['client'].get(documents[document_type])
+        assert document.status_code == 200
+        assert document.mimetype == 'application/pdf'
+        assert document.data.startswith(b'%PDF-')
+    attachments = list(sent_messages[0].iter_attachments())
+    assert {attachment.get_filename() for attachment in attachments} == {
+        f"Lamu-Tours-Invoice-{booking_data['id']}.pdf",
+        f"Lamu-Tours-Receipt-{booking_data['id']}.pdf",
+    }
 
 
 def test_payment_status_requires_opaque_booking_reference(customer_trip):
@@ -294,6 +365,11 @@ def test_payment_status_requires_opaque_booking_reference(customer_trip):
     result = trip['client'].get(f'/api/payment-status/{payment_reference}')
     assert result.status_code == 200
     assert result.get_json()['payment_status'] == 'pending'
+    documents = result.get_json()['document_urls']
+    assert documents['invoice']
+    assert documents['receipt'] is None
+    assert trip['client'].get(documents['invoice']).status_code == 200
+    assert trip['client'].get(f'/api/payment-documents/{payment_reference}/receipt').status_code == 404
     assert trip['client'].get('/api/payment-status/not-a-reference').status_code == 404
 
 

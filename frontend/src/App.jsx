@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { getErrorMessage } from './utils.js';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { getErrorMessage, whatsappUrl } from './utils.js';
+import SmartTripPlanner from './SmartTripPlanner.jsx';
 import {
   AdminDashboardPage,
   AdminActivityDashboardPage,
@@ -8,6 +9,8 @@ import {
   VendorLoginPage,
   VendorRegistrationPage,
 } from './PortalPages.jsx';
+
+const DhowModel = lazy(() => import('./DhowModel.jsx'));
 
 const primaryLinks = [
   ['/index.html', 'Home'],
@@ -80,7 +83,7 @@ function Header() {
           </span>
         </a>
         <button
-          className="rounded-lg border border-[#dedbd2] px-3 py-2 text-sm font-semibold text-[#203b35] md:hidden"
+          className="rounded-lg border border-[#dedbd2] px-3 py-2 text-sm font-semibold text-[#203b35] lg:hidden"
           type="button"
           aria-expanded={menuOpen}
           aria-controls="primary-navigation"
@@ -90,7 +93,7 @@ function Header() {
         </button>
         <nav
           id="primary-navigation"
-          className={`${menuOpen ? 'absolute inset-x-0 top-full flex flex-col border-b border-[#e9e5db] bg-[#fbfaf6] p-4 shadow-lg' : 'hidden'} items-center gap-2 md:static md:flex md:flex-row md:border-0 md:bg-transparent md:p-0 md:shadow-none`}
+          className={`${menuOpen ? 'absolute inset-x-0 top-full flex flex-col border-b border-[#e9e5db] bg-[#fbfaf6] p-4 shadow-lg' : 'hidden'} items-center gap-2 lg:static lg:flex lg:flex-row lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none`}
           aria-label="Main navigation"
         >
           {primaryLinks.map(([href, label]) => (
@@ -113,7 +116,7 @@ function Header() {
             className="rounded-full border border-[#dedbd2] px-4 py-2 text-sm font-semibold text-[#52615b] hover:bg-[#eeeee6]"
             href="/my-bookings"
           >
-            My bookings
+            My account
           </a>
           <button
             className="rounded-full border border-[#dedbd2] px-4 py-2 text-sm font-semibold text-[#52615b] hover:bg-[#eeeee6]"
@@ -197,7 +200,7 @@ function LoadingState({ error, onRetry }) {
     return (
       <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-800" role="alert">
         <p>{error}</p>
-        <button className="mt-3 font-semibold underline" type="button" onClick={onRetry}>Try again</button>
+        <button className="action-button mt-3" type="button" onClick={onRetry}>Try again</button>
       </div>
     );
   }
@@ -347,8 +350,9 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
       <section className="coast-hero relative isolate min-h-[590px] overflow-hidden bg-[#203b35] sm:min-h-[650px]">
         <img className="absolute inset-0 -z-20 h-full w-full object-cover" src="/pictures/187168867.jpg" alt="" />
         <div className="image-overlay absolute inset-0 -z-10" />
+        <Suspense fallback={null}><DhowModel /></Suspense>
         <div className="mx-auto flex min-h-[590px] max-w-7xl items-center px-5 py-20 sm:min-h-[650px] sm:px-8">
-          <div className="max-w-2xl text-white">
+          <div className="hero-copy max-w-2xl text-white">
             <p className="mb-5 text-sm font-bold uppercase tracking-[0.24em] text-[#f1b28b]">An island off the beaten tide · Kenya</p>
             <h1 className="display-font text-5xl leading-[1.05] sm:text-7xl">Let the tides lead you to Lamu.</h1>
             <p className="mt-6 max-w-xl text-lg leading-8 text-white/85">
@@ -407,7 +411,7 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         <div className="mx-auto max-w-7xl">
           <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
             <SectionHeading eyebrow="Go at your own pace" title="The best island days are never hurried." />
-            <a className="mb-8 font-semibold text-[#9a5534] hover:underline" href="/tours.html">Explore every experience →</a>
+            <ButtonLink className="mb-8 self-start" href="/tours.html">Explore every experience →</ButtonLink>
           </div>
           {loading || error ? <LoadingState error={error} onRetry={retry} /> : (
             <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -428,13 +432,13 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
             />
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {catalogue.destinations.map((destination) => (
-                <article className="overflow-hidden rounded-2xl border border-[#e9e5db] bg-white shadow-sm" key={destination.slug}>
+                <article className="destination-card overflow-hidden rounded-2xl border border-[#e9e5db] bg-white shadow-sm" key={destination.slug}>
                   <img className="h-48 w-full object-cover" src={imageUrl(destination.image_url)} alt={destination.name} loading="lazy" />
                   <div className="p-5">
                     <h3 className="display-font text-2xl text-[#203b35]">{destination.name}</h3>
                     <p className="mt-2 min-h-12 text-sm leading-6 text-[#66736d]">{destination.description}</p>
                     <a
-                      className="mt-4 inline-flex font-semibold text-[#9a5534] hover:underline"
+                      className="action-link mt-4"
                       href="#places-to-stay"
                       onClick={() => setLocation(destination.search_location)}
                     >
@@ -543,26 +547,46 @@ function PageBanner({ eyebrow, title, description }) {
 function BookingPage({ catalogue, loading, error, retry }) {
   const params = new URLSearchParams(window.location.search);
   const requestedTour = params.get('tour') || params.get('stay') || '';
+  const requestedSchedule = params.get('schedule_id') || '';
   const initialGuests = params.get('guests') || '1';
+  const initialCheckIn = params.get('check_in') || params.get('date') || new Date().toISOString().slice(0, 10);
+  const initialCheckOut = params.get('check_out') || new Date(Date.parse(`${initialCheckIn}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
   const [selected, setSelected] = useState(requestedTour);
   const [guests, setGuests] = useState(initialGuests);
   const [schedules, setSchedules] = useState([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState('');
-  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedDate, setSelectedDate] = useState(params.get('date') || '');
   const [scheduleId, setScheduleId] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [checkInDate, setCheckInDate] = useState(initialCheckIn);
+  const [checkOutDate, setCheckOutDate] = useState(initialCheckOut);
+  const [stayQuoteUrl, setStayQuoteUrl] = useState('');
+  const [language, setLanguage] = useState(document.documentElement.lang === 'sw' ? 'sw' : 'en');
   const allOptions = [
     ...catalogue.tours.map((tour) => ({ ...tour, kind: 'tour', price: tour.price })),
     ...catalogue.properties.map((property) => ({ ...property, kind: 'stay', price: property.price_per_night })),
   ];
   const selectedListing = allOptions.find((item) => item.slug === selected);
-  const total = selectedListing ? selectedListing.price * Number(guests || 1) : 0;
+  const stayNights = Math.max(0, Math.round((Date.parse(`${checkOutDate}T00:00:00Z`) - Date.parse(`${checkInDate}T00:00:00Z`)) / 86400000));
+  const total = selectedListing
+    ? selectedListing.kind === 'stay'
+      ? selectedListing.price * stayNights
+      : selectedListing.price * Number(guests || 1)
+    : 0;
   const errorMessage = params.get('error');
   const departureDates = [...new Set(schedules.map((item) => item.starts_at.slice(0, 10)))];
   const daySchedules = schedules.filter((item) => item.starts_at.startsWith(selectedDate));
   const selectedSchedule = daySchedules.find((item) => String(item.id) === scheduleId);
+
+  useEffect(() => {
+    function syncLanguage(event) {
+      setLanguage(event.detail.language);
+    }
+    document.addEventListener('lamu-language-changed', syncLanguage);
+    return () => document.removeEventListener('lamu-language-changed', syncLanguage);
+  }, []);
 
   useEffect(() => {
     if (!selectedListing || selectedListing.kind !== 'tour') {
@@ -585,8 +609,11 @@ function BookingPage({ catalogue, loading, error, retry }) {
       })
       .then((result) => {
         setSchedules(result);
-        setSelectedDate(result[0]?.starts_at.slice(0, 10) || '');
-        setScheduleId(result[0] ? String(result[0].id) : '');
+        const preferredSchedule = result.find((item) => String(item.id) === requestedSchedule)
+          || result.find((item) => item.starts_at.startsWith(selectedDate))
+          || result[0];
+        setSelectedDate(preferredSchedule?.starts_at.slice(0, 10) || '');
+        setScheduleId(preferredSchedule ? String(preferredSchedule.id) : '');
       })
       .catch((loadError) => {
         if (loadError.name !== 'AbortError') setAvailabilityError(getErrorMessage(loadError));
@@ -600,8 +627,40 @@ function BookingPage({ catalogue, loading, error, retry }) {
   async function submitBooking(event) {
     event.preventDefault();
     setSubmitError('');
-    setSubmitting(true);
     const data = Object.fromEntries(new FormData(event.currentTarget));
+    if (selectedListing?.kind === 'stay') {
+      if (stayNights < 1) {
+        setSubmitError('Choose a check-out date after check-in.');
+        return;
+      }
+      const dateLabel = (date) => new Date(`${date}T12:00:00`).toLocaleDateString(language === 'sw' ? 'sw-KE' : 'en-KE');
+      const details = String(data.message || '').trim();
+      const message = language === 'sw'
+        ? [
+          'Habari Lamu Tours, tafadhali thibitisheni malazi haya kabla sijalipa:',
+          `Malazi: ${selectedListing.name} (${selectedListing.location})`,
+          `Kuingia: ${dateLabel(checkInDate)}`,
+          `Kutoka: ${dateLabel(checkOutDate)} (${stayNights} usiku)`,
+          `Wageni: ${guests}`,
+          `Jumla ya makadirio: ${formatKenyanShillings(total)}`,
+          ...(details ? [`Maelezo: ${details}`] : []),
+          'Tafadhali thibitisheni nafasi na mtumie hatua salama za malipo ya M-Pesa.',
+        ].join('\n')
+        : [
+          'Hello Lamu Tours, please confirm this stay before I pay:',
+          `Stay: ${selectedListing.name} (${selectedListing.location})`,
+          `Check-in: ${dateLabel(checkInDate)}`,
+          `Check-out: ${dateLabel(checkOutDate)} (${stayNights} ${stayNights === 1 ? 'night' : 'nights'})`,
+          `Guests: ${guests}`,
+          `Estimated stay total: ${formatKenyanShillings(total)}`,
+          ...(details ? [`Notes: ${details}`] : []),
+          'Please confirm availability and share the secure M-Pesa payment steps.',
+        ].join('\n');
+      setStayQuoteUrl(whatsappUrl(message, catalogue.whatsapp_business_phone));
+      return;
+    }
+    setStayQuoteUrl('');
+    setSubmitting(true);
     if (selectedListing?.kind === 'tour') data.schedule_id = scheduleId;
     try {
       const response = await fetch('/booking-confirmation', {
@@ -624,39 +683,37 @@ function BookingPage({ catalogue, loading, error, retry }) {
 
   return (
     <PageShell>
-      <PageBanner eyebrow="A few details, then the island is closer" title="Let’s bring your Lamu plans to life." description="Choose an experience and available departure, then confirm your booking securely with M-Pesa." />
+      <PageBanner
+        eyebrow={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Ombi la malazi' : 'Stay enquiry') : 'A few details, then the island is closer'}
+        title={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Panga kukaa kwako Lamu.' : 'Plan your stay in Lamu.') : 'Let’s bring your Lamu plans to life.'}
+        description={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Chagua tarehe zako na uombe mwenyeji athibitishe nafasi kupitia WhatsApp kabla ya malipo.' : 'Choose your dates and ask the host to confirm availability on WhatsApp before payment.') : 'Choose an experience and available departure, then confirm your booking securely with M-Pesa.'}
+      />
+      <div className="mx-auto max-w-7xl px-5 pt-10 sm:px-8 sm:pt-14">
+        <SmartTripPlanner tours={catalogue.tours} properties={catalogue.properties} destinations={catalogue.destinations} whatsappPhone={catalogue.whatsapp_business_phone} guests={Number(guests) || 1} />
+      </div>
       <section className="mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-9">
-          <h2 className="display-font text-3xl text-[#203b35]">Make it a date with the coast.</h2>
-          <p className="mt-2 text-sm leading-6 text-[#66736d]">Choose a published departure, tell us who’s coming, and approve the M-Pesa prompt sent to your Kenyan mobile number. Your booking is confirmed after payment is verified.</p>
+        <div id="booking-checkout" className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-9">
+          <h2 className="display-font text-3xl text-[#203b35]">{selectedListing?.kind === 'stay' ? 'Ask about your stay' : 'Make it a date with the coast.'}</h2>
+          <p className="mt-2 text-sm leading-6 text-[#66736d]">{selectedListing?.kind === 'stay' ? 'Send these dates to our local team. No payment is taken until the host confirms availability.' : 'Choose a published departure, tell us who’s coming, and approve the M-Pesa prompt sent to your Kenyan mobile number. Your booking is confirmed after payment is verified.'}</p>
           {errorMessage && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{errorMessage}</p>}
           {submitError && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{submitError}</p>}
+          {stayQuoteUrl && <div className="mt-5 rounded-xl bg-[#e9eee8] p-4" role="status"><p className="text-sm text-[#203b35]">Your stay request is ready. The host will confirm dates before payment.</p><a className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={stayQuoteUrl} target="_blank" rel="noreferrer">{catalogue.whatsapp_business_phone ? 'Message Lamu Tours on WhatsApp' : 'Share enquiry in WhatsApp'}</a></div>}
           {loading || error ? <div className="mt-6"><LoadingState error={error} onRetry={retry} /></div> : (
             <form className="mt-7 grid gap-x-5 gap-y-5 sm:grid-cols-2" onSubmit={submitBooking}>
               <label className="sm:col-span-2">
                 <span className="field-label">Tour or stay</span>
-                <select className="field" name="tour" value={selected} onChange={(event) => setSelected(event.target.value)} required>
+                <select className="field" name="tour" value={selected} onChange={(event) => { setSelected(event.target.value); setStayQuoteUrl(''); }} required>
                   <option value="">Choose an experience or stay</option>
                   {catalogue.tours.length > 0 && <optgroup label="Tours">{catalogue.tours.map((tour) => <option key={tour.slug} value={tour.slug}>{tour.name} — {formatKenyanShillings(tour.price)} / person</option>)}</optgroup>}
                   {catalogue.properties.length > 0 && <optgroup label="Places to stay">{catalogue.properties.map((property) => <option key={property.slug} value={property.slug}>{property.name} — {formatKenyanShillings(property.price_per_night)} / night</option>)}</optgroup>}
                 </select>
               </label>
-              <label>
-                <span className="field-label">Full name</span>
-                <input className="field" name="name" autoComplete="name" required />
-              </label>
-              <label>
-                <span className="field-label">Email address</span>
-                <input className="field" name="email" type="email" autoComplete="email" required />
-              </label>
-              <label>
-                <span className="field-label">Country code</span>
-                <input className="field" name="country_code" value="+254" readOnly aria-readonly="true" />
-              </label>
-              <label>
-                <span className="field-label">Phone number</span>
-                <input className="field" name="phone" type="tel" inputMode="numeric" pattern="(?:0?[17][0-9]{8}|254[17][0-9]{8})" title="Enter a Kenyan mobile number, with or without the leading 0 or 254" required />
-              </label>
+              {selectedListing?.kind !== 'stay' && <>
+                <label><span className="field-label">Full name</span><input className="field" name="name" autoComplete="name" required /></label>
+                <label><span className="field-label">Email address</span><input className="field" name="email" type="email" autoComplete="email" required /></label>
+                <label><span className="field-label">Country code</span><input className="field" name="country_code" value="+254" readOnly aria-readonly="true" /></label>
+                <label><span className="field-label">Phone number</span><input className="field" name="phone" type="tel" inputMode="numeric" pattern="(?:0?[17][0-9]{8}|254[17][0-9]{8})" title="Enter a Kenyan mobile number, with or without the leading 0 or 254" required /></label>
+              </>}
               {selectedListing?.kind === 'tour' ? (
                 <>
                   <label>
@@ -683,6 +740,11 @@ function BookingPage({ catalogue, loading, error, retry }) {
                   {availabilityError && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-800 sm:col-span-2" role="alert">{availabilityError}</p>}
                   {!availabilityLoading && !availabilityError && schedules.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d] sm:col-span-2">No departures are available yet. Contact our team and we’ll help arrange a date.</p>}
                 </>
+              ) : selectedListing?.kind === 'stay' ? (
+                <>
+                  <label><span className="field-label">Check-in</span><input className="field" name="check_in" type="date" min={new Date().toISOString().slice(0, 10)} value={checkInDate} onChange={(event) => { setCheckInDate(event.target.value); setStayQuoteUrl(''); }} required /></label>
+                  <label><span className="field-label">Check-out</span><input className="field" name="check_out" type="date" min={checkInDate} value={checkOutDate} onChange={(event) => { setCheckOutDate(event.target.value); setStayQuoteUrl(''); }} required /></label>
+                </>
               ) : (
                 <>
                   <label><span className="field-label">Preferred date</span><input className="field" name="date" type="date" min={new Date().toISOString().slice(0, 10)} required /></label>
@@ -691,7 +753,7 @@ function BookingPage({ catalogue, loading, error, retry }) {
               )}
               <label>
                 <span className="field-label">Number of guests</span>
-                <input className="field" name="guests" type="number" min={selectedListing?.kind === 'tour' ? selectedListing.min_group_size : 1} max={selectedListing?.kind === 'tour' ? Math.min(selectedListing.max_group_size, selectedSchedule?.remaining || selectedListing.max_group_size) : selectedListing?.guests} value={guests} onChange={(event) => setGuests(event.target.value)} required />
+                <input className="field" name="guests" type="number" min={selectedListing?.kind === 'tour' ? selectedListing.min_group_size : 1} max={selectedListing?.kind === 'tour' ? Math.min(selectedListing.max_group_size, selectedSchedule?.remaining || selectedListing.max_group_size) : selectedListing?.guests} value={guests} onChange={(event) => { setGuests(event.target.value); setStayQuoteUrl(''); }} required />
               </label>
               <label className="sm:col-span-2">
                 <span className="field-label">Anything we should know? <span className="font-normal text-[#7a857f]">(optional)</span></span>
@@ -702,10 +764,14 @@ function BookingPage({ catalogue, loading, error, retry }) {
                   <span className="text-sm text-[#66736d]">Estimated total</span>
                   <strong className="text-lg text-[#203b35]">{formatKenyanShillings(total)}</strong>
                 </div>
-                <p className="mt-1 text-xs text-[#7a857f]">Charged in Kenyan shillings (KES). Tour prices are per person; stays are per night.</p>
+                <p className="mt-1 text-xs text-[#7a857f]">{selectedListing?.kind === 'stay'
+                  ? language === 'sw'
+                    ? `${stayNights} usiku kwa ${formatKenyanShillings(selectedListing.price)} kwa usiku. Hakuna malipo hadi uthibitisho.`
+                    : `${stayNights} ${stayNights === 1 ? 'night' : 'nights'} at ${formatKenyanShillings(selectedListing.price)} per night. No charge until confirmed.`
+                  : 'Charged in Kenyan shillings (KES). Tour prices are per person.'}</p>
               </div>
-              <button className="min-h-12 rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38] disabled:opacity-50 sm:col-span-2" type="submit" disabled={submitting || (selectedListing?.kind === 'tour' && (!selectedSchedule || Number(guests) > selectedSchedule.remaining || availabilityLoading))}>
-                {submitting ? 'Opening secure checkout…' : 'Continue to secure payment'}
+              <button className="min-h-12 rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38] disabled:opacity-50 sm:col-span-2" type="submit" disabled={submitting || (selectedListing?.kind === 'tour' && (!selectedSchedule || Number(guests) > selectedSchedule.remaining || availabilityLoading)) || (selectedListing?.kind === 'stay' && stayNights < 1)}>
+                {selectedListing?.kind === 'stay' ? 'Request availability on WhatsApp' : submitting ? 'Opening secure checkout…' : 'Continue to secure payment'}
               </button>
             </form>
           )}
@@ -713,10 +779,10 @@ function BookingPage({ catalogue, loading, error, retry }) {
         <aside className="h-fit rounded-3xl bg-[#e9eee8] p-6 sm:p-7">
           <h2 className="display-font text-2xl text-[#203b35]">Need a hand?</h2>
           <p className="mt-3 text-sm leading-6 text-[#59675f]">Not sure which experience fits? Tell us what you’re looking for and our local team can help.</p>
-          <a className="mt-5 inline-block font-semibold text-[#9a5534] hover:underline" href="/contact.html">Talk to our team →</a>
+          <ButtonLink className="mt-5" href="/contact.html">Talk to our team →</ButtonLink>
           <div className="mt-7 border-t border-[#d7dfd5] pt-6 text-sm text-[#59675f]">
             <p className="font-semibold text-[#203b35]">A note about booking</p>
-            <p className="mt-2 leading-6">Payments are requested securely through M-Pesa STK Push in Kenyan shillings. Your booking is confirmed only after Daraja verifies successful payment.</p>
+            <p className="mt-2 leading-6">{selectedListing?.kind === 'stay' ? 'We’ll confirm availability with the host on WhatsApp. No payment is taken before confirmation.' : 'Payments are requested securely through M-Pesa STK Push in Kenyan shillings. Your booking is confirmed only after Daraja verifies successful payment.'}</p>
           </div>
         </aside>
       </section>
@@ -903,7 +969,6 @@ function AuthPage({ register = false }) {
           </p>
           {!register && <p className="mt-4 text-sm"><a className="font-semibold text-[#9a5534] underline" href="/my-bookings">View or manage your bookings</a></p>}
           <p className="mt-4 text-sm text-[#66736d]">For vendors: <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/login">Sign in</a> or <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/register">create an account</a>.</p>
-          {!register && <p className="mt-4 text-sm"><a className="text-[#66736d] underline" href="/admin/login">Admin sign in</a></p>}
         </div>
       </section>
     </PageShell>
@@ -971,6 +1036,8 @@ function ConfirmationPage() {
           {bookingId && <p className="mt-5 rounded-xl bg-[#f5f3ed] p-4 text-sm font-semibold text-[#203b35]">Booking reference: #{bookingId}</p>}
           {paymentReference && <p className="mt-3 text-sm text-[#66736d]" role="status">{paymentIsConfirmed ? 'Payment status: paid' : paymentFailed ? 'Payment status: not completed' : initiationUnknown ? 'We could not confirm whether the M-Pesa prompt was sent. Check your phone and payment status before trying again.' : 'Waiting for M-Pesa payment confirmation…'}</p>}
           {payment?.mpesa_receipt_number && <p className="mt-2 text-sm font-semibold text-[#31554b]">M-Pesa receipt: {payment.mpesa_receipt_number}</p>}
+          {payment?.document_urls?.invoice && <a className="mt-4 inline-block rounded-full border border-[#31554b] px-4 py-2 text-sm font-semibold text-[#31554b] hover:bg-[#e9eee8]" href={payment.document_urls.invoice}>Download invoice</a>}
+          {payment?.document_urls?.receipt && <a className="mt-4 ml-2 inline-block rounded-full border border-[#31554b] px-4 py-2 text-sm font-semibold text-[#31554b] hover:bg-[#e9eee8]" href={payment.document_urls.receipt}>Download receipt</a>}
           {paymentError && <p className="mt-3 text-sm text-[#8a4c2e]" role="status">{paymentError}</p>}
           {emailStatus === 'sent' && <p className="mt-4 text-sm text-[#31554b]" role="status">A confirmation email has been sent to the address you provided.</p>}
           {emailStatus === 'unavailable' && <p className="mt-4 text-sm text-[#8a4c2e]" role="status">Your booking is saved. Email delivery is not configured right now; keep your booking reference for enquiries.</p>}
@@ -1085,10 +1152,17 @@ function MyBookingsPage() {
 
   return (
     <PageShell>
-      <PageBanner eyebrow="Your Lamu plans" title="My bookings." description="Review your upcoming experiences, and change eligible departures at least 48 hours in advance." />
+      <PageBanner eyebrow="Your account" title="My account and bookings." description="View your account details and manage your Lamu experiences." />
       <section className="mx-auto max-w-5xl space-y-5 px-5 py-12 sm:px-8 sm:py-16">
         {loading && <p className="text-[#66736d]" role="status">Loading your bookings…</p>}
         {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800"><p role="alert">{error}</p><a className="mt-3 inline-block font-semibold underline" href="/login.html">Sign in as a customer</a></div>}
+        {profile && <section className="rounded-2xl border border-[#e9e5db] bg-white p-6 shadow-sm" aria-labelledby="account-details-heading">
+          <h2 id="account-details-heading" className="display-font text-2xl text-[#203b35]">Account details</h2>
+          <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+            <div><dt className="font-semibold text-[#66736d]">Name</dt><dd className="mt-1 text-[#203b35]">{profile.customer.name}</dd></div>
+            <div><dt className="font-semibold text-[#66736d]">Email</dt><dd className="mt-1 text-[#203b35]">{profile.customer.email}</dd></div>
+          </dl>
+        </section>}
         {!loading && !error && bookings.length === 0 && <div className="rounded-2xl bg-white p-7"><h2 className="display-font text-2xl text-[#203b35]">No bookings yet</h2><p className="mt-2 text-[#66736d]">When you book while signed in, your trips will appear here.</p><ButtonLink className="mt-5" href="/tours.html">Explore tours</ButtonLink></div>}
         {profile && bookings.map((booking) => <CustomerBookingCard key={booking.id} booking={booking} csrfToken={profile.csrf_token} onChanged={load} />)}
       </section>
@@ -1120,6 +1194,35 @@ export default function App() {
   const [retryCount, setRetryCount] = useState(0);
   const [, setLanguageVersion] = useState(0);
   const pathname = window.location.pathname.toLowerCase();
+
+  useEffect(() => {
+    if (pathname.startsWith('/admin') || pathname.startsWith('/vendor') || pathname === '/dashboard') return;
+
+    const campaignSource = new URLSearchParams(window.location.search).get('utm_source');
+    let referrerSource = '';
+    try {
+      referrerSource = document.referrer ? new URL(document.referrer).hostname : '';
+    } catch {
+      referrerSource = '';
+    }
+
+    let source = campaignSource || referrerSource;
+    try {
+      const sourceKey = 'lamu-first-touch-source';
+      const firstTouchSource = window.localStorage.getItem(sourceKey);
+      if (firstTouchSource) source = firstTouchSource;
+      else if (source) window.localStorage.setItem(sourceKey, source);
+    } catch {
+      source = campaignSource || referrerSource;
+    }
+
+    fetch('/api/analytics/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ page: pathname, source }),
+      keepalive: true,
+    }).catch(() => {});
+  }, [pathname]);
 
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
@@ -1261,7 +1364,7 @@ export default function App() {
       '/register.html': 'Create an account | Lamu Tours',
       '/tour-details.html': 'Tour details | Lamu Tours',
       '/booking-confirmation.html': 'Booking request received | Lamu Tours',
-      '/my-bookings': 'My bookings | Lamu Tours',
+      '/my-bookings': 'My account | Lamu Tours',
       '/admin/login': 'Admin sign in | Lamu Tours',
       '/admin': 'Admin dashboard | Lamu Tours',
       '/admin/dashboard': 'Admin dashboard | Lamu Tours',

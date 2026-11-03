@@ -98,6 +98,47 @@ h3 {
     linear-gradient(0deg, rgb(3 37 69 / 28%), transparent 55%);
 }
 
+.dhow-stage {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  width: min(58%, 760px);
+  height: 100%;
+}
+
+.dhow-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.dhow-stage canvas.is-dragging {
+  cursor: grabbing;
+}
+
+.dhow-model-hint {
+  position: absolute;
+  top: 1.5rem;
+  right: 1.5rem;
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 9999px;
+  background: rgb(4 35 70 / 42%);
+  padding: 0.55rem 0.9rem;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.dhow-stage--static {
+  display: none;
+}
+
 .field {
   width: 100%;
   border: 1px solid #cbdde9;
@@ -141,6 +182,38 @@ h3 {
 .coast-hero > img {
   animation: island-image-drift 28s ease-in-out infinite alternate;
   transform-origin: center;
+}
+
+.hero-copy > * {
+  animation: hero-copy-rise 700ms both;
+}
+
+.hero-copy > :nth-child(1) {
+  animation-delay: 80ms;
+}
+
+.hero-copy > :nth-child(2) {
+  animation-delay: 180ms;
+}
+
+.hero-copy > :nth-child(3) {
+  animation-delay: 300ms;
+}
+
+.hero-copy > :nth-child(4) {
+  animation-delay: 420ms;
+}
+
+@keyframes hero-copy-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 @keyframes island-image-drift {
@@ -235,6 +308,101 @@ h3 {
 
 .coast-gallery-card:hover img {
   transform: scale(1.05);
+}
+
+.coast-gallery-card figcaption {
+  transition: padding 320ms cubic-bezier(0.2, 0.8, 0.2, 1), letter-spacing 320ms ease;
+}
+
+.coast-gallery-card:hover figcaption {
+  padding-bottom: 1.4rem;
+  letter-spacing: 0.02em;
+}
+
+.tour-card > a:first-child {
+  display: block;
+  overflow: hidden;
+}
+
+.tour-card img,
+.stay-card > img,
+.destination-card > img {
+  transition: transform 650ms cubic-bezier(0.2, 0.7, 0.2, 1), filter 650ms ease;
+}
+
+.tour-card:hover img,
+.stay-card:hover > img,
+.destination-card:hover > img {
+  transform: scale(1.045);
+  filter: saturate(1.08);
+}
+
+.destination-card {
+  box-shadow: 0 10px 28px rgb(15 61 96 / 6%);
+  transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 260ms ease;
+}
+
+.destination-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 34px rgb(8 56 93 / 14%);
+}
+
+.action-link,
+.action-button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid #cfe0e9;
+  border-radius: 9999px;
+  background: white;
+  padding: 0.65rem 1rem;
+  color: #0a4772;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  text-decoration: none;
+  box-shadow: 0 4px 12px rgb(8 56 93 / 8%);
+  cursor: pointer;
+  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 200ms ease, background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+}
+
+.action-link:hover,
+.action-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: #083b66;
+  background: #083b66;
+  color: white;
+  box-shadow: 0 8px 18px rgb(8 56 93 / 18%);
+}
+
+.action-link:active,
+.action-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.action-danger {
+  min-height: 2.5rem;
+  border: 1px solid #f0caca;
+  border-radius: 9999px;
+  background: #fff8f7;
+  padding: 0.5rem 0.9rem;
+  color: #a12622;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 200ms ease, background-color 200ms ease, box-shadow 200ms ease;
+}
+
+.action-danger:hover {
+  transform: translateY(-1px);
+  background: #fff0ee;
+  box-shadow: 0 5px 12px rgb(161 38 34 / 10%);
 }
 
 button:not(:disabled),
@@ -372,6 +540,20 @@ a[href]:active {
   .coast-hero > img,
   .coast-hero::after {
     animation: none !important;
+  }
+
+  .hero-copy > * {
+    animation: none !important;
+  }
+
+  .dhow-stage {
+    display: none;
+  }
+
+  .tour-card img,
+  .stay-card > img,
+  .destination-card > img {
+    transition: none;
   }
 
   .motion-ready .scroll-reveal {

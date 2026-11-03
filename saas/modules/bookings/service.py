@@ -82,6 +82,7 @@ def save_booking(booking):
         message=booking.get('message', ''),
         amount=float(booking.get('amount', 0) or 0),
         commission_rate=float(booking.get('commission_rate', 15) or 15),
+        traffic_source=booking.get('traffic_source', 'Unattributed'),
         payment_status=booking.get('payment_status', 'pending'),
         refund_status=booking.get('refund_status', 'none'),
         status=booking.get('status', 'requested'),
