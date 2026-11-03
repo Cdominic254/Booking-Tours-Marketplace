@@ -7,7 +7,6 @@ import os
 import re
 import secrets
 import smtplib
-import tempfile
 import threading
 import time
 import uuid
@@ -55,6 +54,7 @@ load_dotenv()
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 FRONTEND_DIST = os.path.join(BASE_DIR, 'frontend', 'dist')
+UPLOAD_DIR = os.path.abspath(os.environ.get('UPLOAD_DIR', os.path.join(BASE_DIR, 'uploads')))
 
 EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
 EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
@@ -111,9 +111,11 @@ def add_security_headers(response):
 
 
 database_url = os.environ.get('DATABASE_URL')
+if os.environ.get('VERCEL') == '1' and not database_url:
+    raise RuntimeError('Configure DATABASE_URL with persistent PostgreSQL before deploying to Vercel.')
 if database_url and database_url.startswith('postgres://'):
     database_url = database_url.replace('postgres://', 'postgresql://', 1)
-sqlite_path = os.path.join(tempfile.gettempdir() if os.environ.get('VERCEL') else BASE_DIR, 'submissions.db')
+sqlite_path = os.path.join(BASE_DIR, 'submissions.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or f'sqlite:///{sqlite_path}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
@@ -1917,9 +1919,9 @@ def vendor_availability_item(schedule_id):
 
 
 def save_catalog_image(owner_folder):
-    if os.environ.get('VERCEL') == '1':
+    if os.environ.get('VERCEL') == '1' or (IS_PRODUCTION and not os.environ.get('UPLOAD_DIR')):
         return {
-            'error': 'Image uploads need persistent object storage on Vercel. Use an image URL until storage is configured.'
+            'error': 'Configure persistent image storage before enabling uploads in production.'
         }, 503
 
     uploaded = request.files.get('image')
@@ -1940,7 +1942,7 @@ def save_catalog_image(owner_folder):
         return {'error': 'Upload a valid JPEG, PNG, or WebP image.'}, 400
     filename = f'{uuid.uuid4().hex}{extension}'
     relative_path = os.path.join('uploads', owner_folder, filename)
-    destination = os.path.join(BASE_DIR, relative_path)
+    destination = os.path.join(UPLOAD_DIR, owner_folder, filename)
     os.makedirs(os.path.dirname(destination), exist_ok=True)
     uploaded.save(destination)
     return {'image_url': relative_path.replace(os.sep, '/')}, 201
@@ -2508,6 +2510,11 @@ def reviews():
 @app.route('/hospitality.html')
 def removed_hospitality_page():
     return {'error': 'Not found'}, 404
+
+
+@app.route('/uploads/<path:filename>')
+def uploaded_catalog_image(filename):
+    return send_from_directory(UPLOAD_DIR, filename)
 
 
 @app.route('/<path:filename>')
