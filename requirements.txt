@@ -2,7 +2,6 @@ aiofiles==25.1.0
 alembic==1.18.4
 annotated-types==0.7.0
 anyio==4.11.0
-aptdaemon==2.0.2
 attrs==25.4.0
 autocommand==2.2.2
 babel==2.17.0
@@ -17,8 +16,6 @@ command-not-found==0.3
 configobj==5.0.9
 cryptography==46.0.5
 cupshelpers==1.0
-dasbus==1.7
-dbus-python==1.4.0
 defer==1.0.6
 distro==1.9.0
 distro-info==1.15
@@ -71,7 +68,6 @@ pycups==2.0.4
 pydantic==2.12.5
 pydantic_core==2.41.5
 Pygments==2.19.2
-PyGObject==3.56.2
 PyJWT==2.10.1
 pyparsing==3.3.2
 pyserial==3.5
@@ -100,7 +96,6 @@ torbrowser-launcher==0.3.9
 typeguard==4.4.4
 typing-inspection==0.4.2
 typing_extensions==4.15.0
-ubuntu-drivers-common==0.0.0
 ubuntu-pro-client==8001
 uc-micro-py==1.0.3
 ufw==0.36.2
