@@ -5,10 +5,6 @@
       "name": "Lamu Tours & Booking Agency"
     },
     {
-      "path": "backend",
-      "name": "Backend"
-    },
-    {
       "path": "frontend",
       "name": "Frontend"
     }
