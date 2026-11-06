@@ -79,7 +79,7 @@ function PortalLogin({ role }) {
       <PortalCard>
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">{isVendor ? 'Vendor access' : 'Administration'}</p>
         <h1 className="display-font mt-3 text-4xl text-[#203b35]">{isVendor ? 'Welcome back to your island business.' : 'Welcome to your control room.'}</h1>
-        <p className="mt-3 text-[#66736d]">{isVendor ? 'Your Lamu listings, departures, and guest bookings are all waiting here.' : 'Your Lamu marketplace overview, catalog, and account controls.'}</p>
+        <p className="mt-3 text-[#52615b]">{isVendor ? 'Your Lamu listings, departures, and guest bookings are all waiting here.' : 'Your Lamu marketplace overview, catalog, and account controls.'}</p>
         {error && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
         <form className="mt-7 space-y-5" action={isVendor ? '/vendor/login' : '/admin/login'} method="post">
           <label className="block"><span className="field-label">Email address</span><input className="field" name="email" type="email" autoComplete="username" required /></label>
@@ -87,11 +87,11 @@ function PortalLogin({ role }) {
           <button className="min-h-12 w-full rounded-full bg-[#203b35] px-6 font-semibold text-white hover:bg-[#31554b]" type="submit">Sign in</button>
         </form>
         {isVendor ? (
-          <p className="mt-6 text-sm text-[#66736d]">New vendor? <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/register">Create a vendor account</a></p>
+          <p className="mt-6 text-sm text-[#52615b]">New vendor? <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/register">Create a vendor account</a></p>
         ) : (
-          <p className="mt-6 text-sm text-[#66736d]">Traveler or vendor? <a className="font-semibold text-[#9a5534] hover:underline" href="/login.html">Use the traveler sign-in</a></p>
+          <p className="mt-6 text-sm text-[#52615b]">Traveler or vendor? <a className="font-semibold text-[#9a5534] hover:underline" href="/login.html">Use the traveler sign-in</a></p>
         )}
-        <a className="mt-5 inline-block text-sm text-[#66736d] underline" href="/">Return to the public site</a>
+        <a className="mt-5 inline-block text-sm text-[#52615b] underline" href="/">Return to the public site</a>
       </PortalCard>
     </div>
   );
@@ -148,18 +148,18 @@ export function VendorRegistrationPage() {
       <PortalCard>
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">Partner with us</p>
         <h1 className="display-font mt-3 text-4xl text-[#203b35]">Bring your Lamu experience to more travelers.</h1>
-        <p className="mt-3 text-[#66736d]">Bring your local knowledge to more travelers. Create an account to publish experiences, set departures, and keep your bookings in view.</p>
+        <p className="mt-3 text-[#52615b]">Bring your local knowledge to more travelers. Create an account to publish experiences, set departures, and keep your bookings in view.</p>
         {error && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
         <form className="mt-7 space-y-5" onSubmit={submitRegistration}>
           <label className="block"><span className="field-label">Your name or business name</span><input className="field" name="name" autoComplete="name" required /></label>
           <label className="block"><span className="field-label">Email address</span><input className="field" name="email" type="email" autoComplete="email" required /></label>
-          <label className="block"><span className="field-label">Password</span><input className="field" name="password" type="password" minLength="12" autoComplete="new-password" required /><span className="mt-1 block text-xs text-[#7a857f]">Use at least 12 characters.</span></label>
+          <label className="block"><span className="field-label">Password</span><input className="field" name="password" type="password" minLength="12" autoComplete="new-password" required /><span className="mt-1 block text-xs text-[#52615b]">Use at least 12 characters.</span></label>
           <button className="min-h-12 w-full rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38] disabled:opacity-60" type="submit" disabled={loading || submitting || !csrfToken}>
             {loading ? 'Preparing secure sign-up…' : submitting ? 'Creating account…' : 'Create vendor account'}
           </button>
         </form>
-        <p className="mt-6 text-sm text-[#66736d]">Already registered? <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/login">Vendor sign in</a></p>
-        <a className="mt-5 inline-block text-sm text-[#66736d] underline" href="/">Return to the public site</a>
+        <p className="mt-6 text-sm text-[#52615b]">Already registered? <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/login">Vendor sign in</a></p>
+        <a className="mt-5 inline-block text-sm text-[#52615b] underline" href="/">Return to the public site</a>
       </PortalCard>
     </div>
   );
@@ -197,9 +197,9 @@ const tourFields = [
   { name: 'min_group_size', label: 'Minimum group size', type: 'number', min: 1, required: true },
   { name: 'max_group_size', label: 'Maximum group size', type: 'number', min: 1, required: true },
   { name: 'image_url', label: 'Image URL or images/ path' },
-  { name: 'itinerary', label: 'Itinerary (one step per line)', type: 'textarea', wide: true },
-  { name: 'inclusions', label: 'Inclusions (one per line)', type: 'textarea', wide: true },
-  { name: 'exclusions', label: 'Exclusions (one per line)', type: 'textarea', wide: true },
+  { name: 'itinerary', label: 'Itinerary (time slot | activity; Highlights: ...)', type: 'textarea', wide: true },
+  { name: 'inclusions', label: "What's included (one item per line)", type: 'textarea', wide: true },
+  { name: 'exclusions', label: "What's not included (one item per line)", type: 'textarea', wide: true },
   { name: 'description', label: 'Description', type: 'textarea', wide: true, required: true },
 ];
 
@@ -269,7 +269,7 @@ function SectionCard({ title, description, children }) {
     <section className="rounded-2xl border border-[#e9e5db] bg-white p-5 shadow-sm sm:p-7">
       <div className="mb-5">
         <h2 className="display-font text-2xl text-[#203b35]">{title}</h2>
-        {description && <p className="mt-2 text-sm leading-6 text-[#66736d]">{description}</p>}
+        {description && <p className="mt-2 text-sm leading-6 text-[#52615b]">{description}</p>}
       </div>
       {children}
     </section>
@@ -316,7 +316,7 @@ function CatalogSection({ title, items, fields, basePath, onMutation, ownerLabel
       <label className="block">
         <span className="field-label">Upload a photo</span>
         <input className="field" type="file" accept="image/jpeg,image/png,image/webp" onChange={upload} disabled={uploading} />
-        {uploading && <span className="mt-1 block text-xs text-[#66736d]">Uploading photo…</span>}
+        {uploading && <span className="mt-1 block text-xs text-[#52615b]">Uploading photo…</span>}
         {error && <span className="mt-1 block text-xs text-red-700" role="alert">{error}</span>}
       </label>
     );
@@ -349,7 +349,7 @@ function CatalogSection({ title, items, fields, basePath, onMutation, ownerLabel
       </DataForm>
       <Notice error>{formError}</Notice>
       <div className="mt-6 space-y-4">
-        {items.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d]">No {title.toLowerCase()} yet.</p>}
+        {items.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">No {title.toLowerCase()} yet.</p>}
         {items.map((item) => {
           const url = `${basePath}/${encodeURIComponent(item.slug ?? item.id)}`;
           return (
@@ -357,7 +357,7 @@ function CatalogSection({ title, items, fields, basePath, onMutation, ownerLabel
               <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h3 className="font-semibold text-[#203b35]">{item.name}</h3>
-                  {ownerLabel?.(item) && <p className="mt-1 text-xs text-[#66736d]">{ownerLabel(item)}</p>}
+                  {ownerLabel?.(item) && <p className="mt-1 text-xs text-[#52615b]">{ownerLabel(item)}</p>}
                 </div>
                 {item.price != null && <span className="text-sm font-semibold text-[#9a5534]">KSh {formatNumber(item.price)}</span>}
                 {item.price_per_night != null && <span className="text-sm font-semibold text-[#9a5534]">KSh {formatNumber(item.price_per_night)} / night</span>}
@@ -428,16 +428,16 @@ function VendorBookingsSection({ csrfToken }) {
   return (
     <SectionCard title="Bookings" description="View reservations for your tours and progress them through the service workflow.">
       <Notice error>{error}</Notice><Notice>{message}</Notice>
-      {loading && <p className="text-sm text-[#66736d]" role="status">Loading bookings…</p>}
-      {!loading && bookings.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d]">No tour bookings yet.</p>}
+      {loading && <p className="text-sm text-[#52615b]" role="status">Loading bookings…</p>}
+      {!loading && bookings.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">No tour bookings yet.</p>}
       <div className="space-y-4">
         {bookings.map((booking) => (
           <article className="rounded-xl border border-[#e9e5db] p-4 sm:p-5" key={booking.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><h3 className="font-semibold capitalize text-[#203b35]">{booking.tour_name}</h3><p className="mt-1 text-sm text-[#66736d]">Booking #{booking.id} · {booking.date} at {booking.time} · {booking.guests} guest{booking.guests === 1 ? '' : 's'}</p><p className="mt-1 text-sm text-[#66736d]">{booking.name} · {booking.email} · {booking.phone}</p></div>
+              <div><h3 className="font-semibold capitalize text-[#203b35]">{booking.tour_name}</h3><p className="mt-1 text-sm text-[#52615b]">Booking #{booking.id} · {booking.date} at {booking.time} · {booking.guests} guest{booking.guests === 1 ? '' : 's'}</p><p className="mt-1 text-sm text-[#52615b]">{booking.name} · {booking.email} · {booking.phone}</p></div>
               <span className="rounded-full bg-[#efeee7] px-3 py-1 text-sm font-semibold capitalize text-[#52615b]">{booking.status.replaceAll('_', ' ')}</span>
             </div>
-            <p className="mt-2 text-xs text-[#7a857f]">KSh {formatNumber(booking.amount)} · Payment: {booking.payment_status}</p>
+            <p className="mt-2 text-xs text-[#52615b]">KSh {formatNumber(booking.amount)} · Payment: {booking.payment_status}</p>
             <div className="mt-4 flex flex-wrap gap-2">
               {(transitions[booking.status] || []).map((status) => (
                 <button className={`rounded-full px-4 py-2 text-sm font-semibold ${status === 'cancelled' ? 'border border-red-200 text-red-700' : 'bg-[#203b35] text-white hover:bg-[#31554b]'}`} key={status} type="button" onClick={() => updateStatus(booking, status)}>
@@ -501,7 +501,7 @@ function AdminAccounts({ admins, vendors, onMutation }) {
         <div>
           <h3 className="mb-3 font-semibold text-[#203b35]">Vendor accounts</h3>
           <div className="space-y-3">
-            {vendors.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d]">No vendors have registered yet.</p>}
+            {vendors.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">No vendors have registered yet.</p>}
             {vendors.map((vendor) => (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#f5f3ed] p-4" key={vendor.id}>
                 <span className="text-sm text-[#52615b]">
@@ -662,13 +662,13 @@ function AvailabilitySection({ tours, endpoint, csrfToken }) {
         <label><span className="field-label">Guest capacity</span><input className="field" type="number" min="1" name="capacity" required /></label>
         <button className="rounded-full bg-[#203b35] px-5 py-2.5 text-sm font-semibold text-white sm:col-span-3 sm:justify-self-start" type="submit" disabled={!tours.length}>Add departure</button>
       </form>
-      {loading && <p className="mt-5 text-sm text-[#66736d]" role="status">Loading departures…</p>}
-      {!loading && schedules.length === 0 && <p className="mt-5 rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d]">No departures published yet.</p>}
+      {loading && <p className="mt-5 text-sm text-[#52615b]" role="status">Loading departures…</p>}
+      {!loading && schedules.length === 0 && <p className="mt-5 rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">No departures published yet.</p>}
       <div className="mt-5 space-y-3">
         {schedules.map((schedule) => (
           <div className="rounded-xl border border-[#e9e5db] p-4" key={schedule.id}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div><p className="font-semibold text-[#203b35]">{tours.find((tour) => tour.slug === schedule.tour_slug)?.name || schedule.tour_slug}</p><p className="mt-1 text-sm text-[#66736d]">{schedule.booked_count}/{schedule.capacity} guests booked</p></div>
+              <div><p className="font-semibold text-[#203b35]">{tours.find((tour) => tour.slug === schedule.tour_slug)?.name || schedule.tour_slug}</p><p className="mt-1 text-sm text-[#52615b]">{schedule.booked_count}/{schedule.capacity} guests booked</p></div>
               <button className="action-danger text-sm" type="button" onClick={() => remove(schedule)}>Remove</button>
             </div>
             <form className="grid gap-3 sm:grid-cols-[1fr_10rem_auto]" onSubmit={(event) => update(schedule, event)}>
@@ -718,7 +718,7 @@ function AdminUserManagement({ customers, vendors, onMutation }) {
     <SectionCard title="User management" description="Review customer and operator accounts, and suspend or restore access without deleting booking history.">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-          <thead><tr className="border-b border-[#e9e5db] text-[#66736d]">{['Name', 'Email', 'Role', 'Bookings', 'Access'].map((label) => <th className="px-3 py-3 font-semibold" key={label}>{label}</th>)}</tr></thead>
+          <thead><tr className="border-b border-[#e9e5db] text-[#52615b]">{['Name', 'Email', 'Role', 'Bookings', 'Access'].map((label) => <th className="px-3 py-3 font-semibold" key={label}>{label}</th>)}</tr></thead>
           <tbody>{accounts.map((account) => (
             <tr className="border-b border-[#f0ede6] text-[#52615b]" key={`${account.role}-${account.id}`}>
               <td className="px-3 py-3">{account.name}</td>
@@ -743,7 +743,7 @@ function AdminUserManagement({ customers, vendors, onMutation }) {
           ))}</tbody>
         </table>
       </div>
-      {accounts.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d]">No customer or vendor accounts yet.</p>}
+      {accounts.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">No customer or vendor accounts yet.</p>}
     </SectionCard>
   );
 }
@@ -789,8 +789,8 @@ function AdminBookingCard({ booking, onMutation }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="font-semibold text-[#203b35]">#{booking.id} · {booking.tour_name}</h3>
-          <p className="mt-1 text-sm text-[#66736d]">{booking.name} · {booking.email} · {booking.phone}</p>
-          <p className="mt-1 text-sm text-[#66736d]">{booking.date} at {booking.time} · {booking.guests} guest{booking.guests === 1 ? '' : 's'}</p>
+          <p className="mt-1 text-sm text-[#52615b]">{booking.name} · {booking.email} · {booking.phone}</p>
+          <p className="mt-1 text-sm text-[#52615b]">{booking.date} at {booking.time} · {booking.guests} guest{booking.guests === 1 ? '' : 's'}</p>
         </div>
         <span className="rounded-full bg-[#efeee7] px-3 py-1 text-sm font-semibold capitalize text-[#52615b]">{booking.status.replaceAll('_', ' ')}</span>
       </div>
@@ -837,13 +837,13 @@ function AdminDisputes({ disputes, onMutation }) {
   const [resolutions, setResolutions] = useState({});
   return (
     <SectionCard title="Dispute handling" description="Create internal cases from a booking and record the resolution for the audit trail.">
-      {disputes.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d]">No dispute cases have been recorded.</p>}
+      {disputes.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">No dispute cases have been recorded.</p>}
       <div className="space-y-3">
         {disputes.map((dispute) => (
           <article className="rounded-xl border border-[#e9e5db] p-4" key={dispute.id}>
             <div className="flex flex-wrap justify-between gap-2">
               <h3 className="font-semibold text-[#203b35]">Case #{dispute.id} · Booking #{dispute.booking_id} · {dispute.tour}</h3>
-              <span className="text-sm font-semibold capitalize text-[#66736d]">{dispute.status}</span>
+              <span className="text-sm font-semibold capitalize text-[#52615b]">{dispute.status}</span>
             </div>
             <p className="mt-2 text-sm text-[#52615b]">{dispute.booking_name} · {dispute.booking_email}</p>
             <p className="mt-2 whitespace-pre-wrap text-sm text-[#52615b]">{dispute.reason}</p>
@@ -893,14 +893,14 @@ function AnalyticsVisuals({ analytics }) {
     <div className="mt-7 grid gap-x-8 gap-y-8 lg:grid-cols-2">
       <section className="border-t border-[#e9e5db] pt-5" aria-labelledby="conversion-funnel-title">
         <h3 id="conversion-funnel-title" className="font-semibold text-[#203b35]">Conversion funnel</h3>
-        <p className="mt-1 text-xs text-[#66736d]">Last {analytics.period_days} days · unique browser sessions</p>
+        <p className="mt-1 text-xs text-[#52615b]">Last {analytics.period_days} days · unique browser sessions</p>
         <div className="mt-4 space-y-3">
           {analytics.funnel.map((stage, index) => (
             <div key={stage.label}>
               <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
                 <span className="text-[#52615b]">{stage.label}</span>
                 <span className="font-semibold tabular-nums text-[#203b35]">
-                  {formatNumber(stage.count)} <span className="font-normal text-[#66736d]">{index ? `${stage.conversion_rate}%` : ''}</span>
+                  {formatNumber(stage.count)} <span className="font-normal text-[#52615b]">{index ? `${stage.conversion_rate}%` : ''}</span>
                 </span>
               </div>
               <AnalyticsBar label={`${stage.label}: ${stage.count}`} value={stage.count} max={visitorMax} />
@@ -911,22 +911,22 @@ function AnalyticsVisuals({ analytics }) {
 
       <section className="border-t border-[#e9e5db] pt-5" aria-labelledby="traffic-sources-title">
         <h3 id="traffic-sources-title" className="font-semibold text-[#203b35]">Traffic sources</h3>
-        <p className="mt-1 text-xs text-[#66736d]">First-touch attribution · last {analytics.period_days} days</p>
+        <p className="mt-1 text-xs text-[#52615b]">First-touch attribution · last {analytics.period_days} days</p>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[30rem] text-left text-sm">
-            <thead className="border-b border-[#e9e5db] text-xs text-[#66736d]">
+            <thead className="border-b border-[#e9e5db] text-xs text-[#52615b]">
               <tr><th className="py-2 font-medium">Source</th><th className="py-2 text-right font-medium">Visitors</th><th className="py-2 text-right font-medium">Bookings</th><th className="py-2 text-right font-medium">Paid</th></tr>
             </thead>
             <tbody>
               {analytics.traffic_sources.map((source) => (
                 <tr className="border-b border-[#f0ede6]" key={source.source}>
-                  <th scope="row" className="py-2.5 font-medium text-[#203b35]">{source.source}<span className="ml-2 text-xs font-normal text-[#66736d]">{source.conversion_rate}%</span></th>
+                  <th scope="row" className="py-2.5 font-medium text-[#203b35]">{source.source}<span className="ml-2 text-xs font-normal text-[#52615b]">{source.conversion_rate}%</span></th>
                   <td className="py-2.5 text-right tabular-nums">{formatNumber(source.visitors)}</td>
                   <td className="py-2.5 text-right tabular-nums">{formatNumber(source.booking_requests)}</td>
                   <td className="py-2.5 text-right tabular-nums">KSh {formatNumber(source.paid_revenue)}</td>
                 </tr>
               ))}
-              {analytics.traffic_sources.length === 0 && <tr><td className="py-4 text-sm text-[#66736d]" colSpan="4">Traffic data will appear as visitors use the site.</td></tr>}
+              {analytics.traffic_sources.length === 0 && <tr><td className="py-4 text-sm text-[#52615b]" colSpan="4">Traffic data will appear as visitors use the site.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -934,7 +934,7 @@ function AnalyticsVisuals({ analytics }) {
 
       <section className="border-t border-[#e9e5db] pt-5" aria-labelledby="occupancy-trends-title">
         <h3 id="occupancy-trends-title" className="font-semibold text-[#203b35]">Departure occupancy trends</h3>
-        <p className="mt-1 text-xs text-[#66736d]">Booked seats ÷ published tour capacity · six months before and ahead</p>
+        <p className="mt-1 text-xs text-[#52615b]">Booked seats ÷ published tour capacity · six months before and ahead</p>
         <div className="mt-4 grid grid-cols-6 gap-x-2 gap-y-4 sm:grid-cols-12">
           {analytics.occupancy_trends.map((month) => (
             <div className="min-w-0 text-center" key={month.month}>
@@ -942,8 +942,8 @@ function AnalyticsVisuals({ analytics }) {
               <div className="flex h-20 items-end overflow-hidden rounded-t bg-[#efeee7]" role="meter" aria-label={`${month.month} tour departure occupancy`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={month.occupancy_rate}>
                 <div className="w-full bg-[#177b5b]" style={{ height: `${month.occupancy_rate}%` }} />
               </div>
-              <p className="mt-1 truncate text-[10px] text-[#66736d]">{new Date(`${month.month}-01T12:00:00`).toLocaleDateString(locale, { month: 'short' })}</p>
-              <p className="text-[10px] tabular-nums text-[#66736d]">{month.booked_seats}/{month.capacity}</p>
+              <p className="mt-1 truncate text-[10px] text-[#52615b]">{new Date(`${month.month}-01T12:00:00`).toLocaleDateString(locale, { month: 'short' })}</p>
+              <p className="text-[10px] tabular-nums text-[#52615b]">{month.booked_seats}/{month.capacity}</p>
             </div>
           ))}
         </div>
@@ -951,7 +951,7 @@ function AnalyticsVisuals({ analytics }) {
 
       <section className="border-t border-[#e9e5db] pt-5" aria-labelledby="property-revenue-title">
         <h3 id="property-revenue-title" className="font-semibold text-[#203b35]">Paid revenue by property</h3>
-        <p className="mt-1 text-xs text-[#66736d]">All-time verified property bookings</p>
+        <p className="mt-1 text-xs text-[#52615b]">All-time verified property bookings</p>
         <div className="mt-4 space-y-3">
           {analytics.property_revenue.map((property) => (
             <div key={property.slug}>
@@ -960,10 +960,10 @@ function AnalyticsVisuals({ analytics }) {
                 <span className="shrink-0 text-right tabular-nums text-[#52615b]">KSh {formatNumber(property.paid_revenue)}</span>
               </div>
               <AnalyticsBar label={`${property.name}: KSh ${formatNumber(property.paid_revenue)}`} value={property.paid_revenue} max={revenueMax} />
-              <p className="mt-1 text-xs text-[#66736d]">{formatNumber(property.paid_bookings)} paid booking{property.paid_bookings === 1 ? '' : 's'}</p>
+              <p className="mt-1 text-xs text-[#52615b]">{formatNumber(property.paid_bookings)} paid booking{property.paid_bookings === 1 ? '' : 's'}</p>
             </div>
           ))}
-          {analytics.property_revenue.length === 0 && <p className="text-sm text-[#66736d]">Property revenue will appear after a verified property booking.</p>}
+          {analytics.property_revenue.length === 0 && <p className="text-sm text-[#52615b]">Property revenue will appear after a verified property booking.</p>}
         </div>
       </section>
     </div>
@@ -990,7 +990,7 @@ function AdminOperationsSection() {
       <SectionCard title="Commission & refund rules" description="Commission is captured on new bookings. Refund decisions require manual review; no payment is automatically refunded by this dashboard.">
         <DashboardStatus error={error} message={message} />
         <Notice error>{settingsError}</Notice>
-        {loading && !data && <p className="text-sm text-[#66736d]" role="status">Loading admin operations…</p>}
+        {loading && !data && <p className="text-sm text-[#52615b]" role="status">Loading admin operations…</p>}
         {data && <form className="grid gap-4 sm:grid-cols-[12rem_1fr_auto] sm:items-end" onSubmit={updateSettings}>
           <label><span className="field-label">Commission rate (%)</span><input className="field" type="number" name="commission_rate" min="10" max="20" step="0.1" defaultValue={data.settings.commission_rate} required /></label>
           <div className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">
@@ -1004,7 +1004,7 @@ function AdminOperationsSection() {
       {data && <AdminUserManagement customers={data.customers} vendors={data.vendors} onMutation={mutate} />}
       {data && <SectionCard title="Bookings oversight" description={`${data.bookings_truncated ? 'Showing the latest 200 bookings. ' : ''}Review bookings, cancel active reservations, manage refund reviews, and open dispute cases.`}>
         <div className="space-y-4">
-          {data.bookings.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d]">No bookings have been received.</p>}
+          {data.bookings.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">No bookings have been received.</p>}
           {data.bookings.map((booking) => <AdminBookingCard booking={booking} onMutation={mutate} key={booking.id} />)}
         </div>
       </SectionCard>}
@@ -1015,14 +1015,14 @@ function AdminOperationsSection() {
             ['All bookings', data.analytics.total_bookings],
             ['Paid revenue', `KSh ${formatNumber(data.analytics.paid_revenue)}`],
             ['Commission earned', `KSh ${formatNumber(data.analytics.commission_earned)}`],
-          ].map(([label, value]) => <div className="rounded-xl bg-[#f5f3ed] p-4" key={label}><p className="text-sm text-[#66736d]">{label}</p><p className="display-font mt-2 text-2xl text-[#203b35]">{value}</p></div>)}
+          ].map(([label, value]) => <div className="rounded-xl bg-[#f5f3ed] p-4" key={label}><p className="text-sm text-[#52615b]">{label}</p><p className="display-font mt-2 text-2xl text-[#203b35]">{value}</p></div>)}
         </div>
         <div className="mt-5 space-y-3">
           {data.analytics.by_tour.map((tour) => <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#f0ede6] py-3 text-sm" key={tour.tour}>
-            <div><p className="font-semibold text-[#203b35]">{tour.tour_name}</p><p className="text-[#66736d]">{tour.bookings} booking{tour.bookings === 1 ? '' : 's'}</p></div>
+            <div><p className="font-semibold text-[#203b35]">{tour.tour_name}</p><p className="text-[#52615b]">{tour.bookings} booking{tour.bookings === 1 ? '' : 's'}</p></div>
             <div className="text-right text-[#52615b]"><p>KSh {formatNumber(tour.paid_revenue)} paid</p><p>KSh {formatNumber(tour.commission_earned)} commission</p></div>
           </div>)}
-          {data.analytics.by_tour.length === 0 && <p className="text-sm text-[#66736d]">Analytics will appear when bookings are received.</p>}
+          {data.analytics.by_tour.length === 0 && <p className="text-sm text-[#52615b]">Analytics will appear when bookings are received.</p>}
         </div>
         <AnalyticsVisuals analytics={data.analytics} />
       </SectionCard>}
@@ -1034,10 +1034,10 @@ function ActivityTable({ title, columns, rows, emptyMessage }) {
   return (
     <SectionCard title={title}>
       {rows.length === 0
-        ? <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d]">{emptyMessage}</p>
+        ? <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">{emptyMessage}</p>
         : <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-            <thead><tr className="border-b border-[#e9e5db] text-[#66736d]">{columns.map(([label]) => <th className="px-3 py-3 font-semibold" key={label}>{label}</th>)}</tr></thead>
+            <thead><tr className="border-b border-[#e9e5db] text-[#52615b]">{columns.map(([label]) => <th className="px-3 py-3 font-semibold" key={label}>{label}</th>)}</tr></thead>
             <tbody>{rows.map((row) => (
               <tr className="border-b border-[#f0ede6] align-top text-[#52615b]" key={row.id}>
                 {columns.map(([label, render]) => <td className="px-3 py-3" key={label}>{render(row)}</td>)}
@@ -1059,14 +1059,14 @@ export function AdminActivityDashboardPage() {
     onError: setSignOutError,
   });
 
-  if (loading && !data) return <div className="min-h-screen bg-[#f8f7f2]"><PortalHeader role="Admin" actor="Loading your dashboard…" /><main className="mx-auto max-w-7xl px-5 py-10 text-[#66736d]">Loading bookings and messages…</main></div>;
+  if (loading && !data) return <div className="min-h-screen bg-[#f8f7f2]"><PortalHeader role="Admin" actor="Loading your dashboard…" /><main className="mx-auto max-w-7xl px-5 py-10 text-[#52615b]">Loading bookings and messages…</main></div>;
   if (error && !data) return <DashboardLoadError role="Admin" error={error} onRetry={load} />;
 
   return (
     <DashboardLayout role="Admin" actor="Bookings and messages" signOut={signOut}>
       <DashboardStatus error={error || signOutError} />
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-[#66736d]">A clear view of the latest guest enquiries and tour booking activity across Lamu.</p>
+        <p className="text-sm text-[#52615b]">A clear view of the latest guest enquiries and tour booking activity across Lamu.</p>
         <a className="font-semibold text-[#9a5534] hover:underline" href="/admin">Catalog and accounts →</a>
       </div>
       {data && <div className="grid gap-4 sm:grid-cols-2">
@@ -1075,7 +1075,7 @@ export function AdminActivityDashboardPage() {
           ['Total booking requests', data.total_bookings],
           ['Recent messages shown', data.recent_submissions.length],
           ['Recent bookings shown', data.recent_bookings.length],
-        ].map(([label, count]) => <div className="rounded-2xl border border-[#e9e5db] bg-white p-5" key={label}><p className="text-sm text-[#66736d]">{label}</p><p className="display-font mt-2 text-3xl text-[#203b35]">{count}</p></div>)}
+        ].map(([label, count]) => <div className="rounded-2xl border border-[#e9e5db] bg-white p-5" key={label}><p className="text-sm text-[#52615b]">{label}</p><p className="display-font mt-2 text-3xl text-[#203b35]">{count}</p></div>)}
       </div>}
       {data && <ActivityTable
         title="Latest contact submissions"
@@ -1119,7 +1119,7 @@ export function AdminDashboardPage() {
     onError: setSignOutError,
   });
 
-  if (loading && !data) return <div className="min-h-screen bg-[#f8f7f2]"><PortalHeader role="Admin" actor="Loading your dashboard…" /><main className="mx-auto max-w-7xl px-5 py-10 text-[#66736d]">Loading catalogue…</main></div>;
+  if (loading && !data) return <div className="min-h-screen bg-[#f8f7f2]"><PortalHeader role="Admin" actor="Loading your dashboard…" /><main className="mx-auto max-w-7xl px-5 py-10 text-[#52615b]">Loading catalogue…</main></div>;
   if (error && !data) return <DashboardLoadError role="Admin" error={error} onRetry={load} />;
 
   const vendorOwner = (item) => item.vendor_id
@@ -1129,14 +1129,14 @@ export function AdminDashboardPage() {
   return (
     <DashboardLayout role="Admin" actor="Catalog management" signOut={signOut}>
       <DashboardStatus error={error || signOutError} message={message} />
-      <p className="text-sm text-[#66736d]">Shape the experiences guests discover, support local operators, and keep an eye on how the marketplace is growing.</p>
+      <p className="text-sm text-[#52615b]">Shape the experiences guests discover, support local operators, and keep an eye on how the marketplace is growing.</p>
       <AdminOperationsSection />
       {data && <div className="grid gap-4 sm:grid-cols-3">
         {[
           ['Tours', data.tours.length],
           ['Properties', data.properties.length],
           ['Vendors', data.vendors.length],
-        ].map(([label, count]) => <div className="rounded-2xl border border-[#e9e5db] bg-white p-5" key={label}><p className="text-sm text-[#66736d]">{label}</p><p className="display-font mt-2 text-3xl text-[#203b35]">{count}</p></div>)}
+        ].map(([label, count]) => <div className="rounded-2xl border border-[#e9e5db] bg-white p-5" key={label}><p className="text-sm text-[#52615b]">{label}</p><p className="display-font mt-2 text-3xl text-[#203b35]">{count}</p></div>)}
       </div>}
       {data && <CatalogSection title="Tours" items={data.tours} fields={tourFields} basePath="/api/admin/tours" onMutation={mutate} ownerLabel={vendorOwner} csrfToken={data.csrf_token} />}
       {data && <AvailabilitySection tours={data.tours} endpoint="/api/admin/availability" csrfToken={data.csrf_token} />}
@@ -1158,18 +1158,18 @@ export function VendorDashboardPage() {
     onError: setSignOutError,
   });
 
-  if (loading && !data) return <div className="min-h-screen bg-[#f8f7f2]"><PortalHeader role="Vendor" actor="Loading your dashboard…" /><main className="mx-auto max-w-7xl px-5 py-10 text-[#66736d]">Loading your listings…</main></div>;
+  if (loading && !data) return <div className="min-h-screen bg-[#f8f7f2]"><PortalHeader role="Vendor" actor="Loading your dashboard…" /><main className="mx-auto max-w-7xl px-5 py-10 text-[#52615b]">Loading your listings…</main></div>;
   if (error && !data) return <DashboardLoadError role="Vendor" error={error} onRetry={load} />;
 
   return (
     <DashboardLayout role="Vendor" actor={data?.vendor.name || 'Your listings'} signOut={signOut}>
       <DashboardStatus error={error || signOutError} message={message} />
-      {data && <p className="text-sm text-[#66736d]">Welcome, {data.vendor.name}. Your tours, stays, departures, and guest bookings are gathered here. Signed in as {data.vendor.email}.</p>}
+      {data && <p className="text-sm text-[#52615b]">Welcome, {data.vendor.name}. Your tours, stays, departures, and guest bookings are gathered here. Signed in as {data.vendor.email}.</p>}
       {data && <div className="grid gap-4 sm:grid-cols-2">
         {[
           ['Your tours', data.tours.length],
           ['Your properties', data.properties.length],
-        ].map(([label, count]) => <div className="rounded-2xl border border-[#e9e5db] bg-white p-5" key={label}><p className="text-sm text-[#66736d]">{label}</p><p className="display-font mt-2 text-3xl text-[#203b35]">{count}</p></div>)}
+        ].map(([label, count]) => <div className="rounded-2xl border border-[#e9e5db] bg-white p-5" key={label}><p className="text-sm text-[#52615b]">{label}</p><p className="display-font mt-2 text-3xl text-[#203b35]">{count}</p></div>)}
       </div>}
       {data && <CatalogSection title="Tours" items={data.tours} fields={tourFields} basePath="/api/vendor/tours" onMutation={mutate} csrfToken={data.csrf_token} />}
       {data && <AvailabilitySection tours={data.tours} endpoint="/api/vendor/availability" csrfToken={data.csrf_token} />}

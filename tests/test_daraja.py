@@ -92,3 +92,13 @@ def test_unknown_stk_transport_outcome_is_not_treated_as_a_rejection(monkeypatch
         )
 
     assert error.value.outcome_unknown is True
+
+
+@pytest.mark.parametrize('url', [
+    'file:///etc/passwd',
+    'http://sandbox.safaricom.co.ke/mpesa',
+    'https://attacker.example/mpesa',
+])
+def test_daraja_request_rejects_untrusted_urls(url):
+    with pytest.raises(daraja.DarajaError, match='URL is not allowed'):
+        daraja._request_json(url)

@@ -20,7 +20,7 @@ from email.message import EmailMessage
 from dotenv import load_dotenv
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask import Flask, redirect, render_template, request, send_file, send_from_directory, render_template_string, session
+from flask import Flask, redirect, request, send_file, send_from_directory, session
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from sqlalchemy import case, text
@@ -141,8 +141,6 @@ def ensure_booking_payment_columns():
             connection.execute(text('ALTER TABLE booking ADD COLUMN payment_confirmed_at TIMESTAMP'))
         if 'traffic_source' not in booking_columns:
             connection.execute(text("ALTER TABLE booking ADD COLUMN traffic_source VARCHAR(120) NOT NULL DEFAULT 'Unattributed'"))
-        if 'traffic_source' not in booking_columns:
-            connection.execute(text("ALTER TABLE booking ADD COLUMN traffic_source VARCHAR(120) NOT NULL DEFAULT 'unattributed'"))
         if 'user_id' not in booking_columns:
             connection.execute(text('ALTER TABLE booking ADD COLUMN user_id INTEGER'))
         if 'schedule_id' not in booking_columns:
@@ -177,6 +175,7 @@ def ensure_identity_columns():
 
 
 def ensure_admin_settings():
+    changed = False
     for key, value in {
         'commission_rate': '15',
         'refund_policy': 'manual_review',
@@ -184,7 +183,9 @@ def ensure_admin_settings():
     }.items():
         if not db.session.get(AdminSetting, key):
             db.session.add(AdminSetting(key=key, value=value))
-    db.session.commit()
+            changed = True
+    if changed:
+        db.session.commit()
 
 
 def get_admin_setting(key, default):
@@ -251,7 +252,8 @@ def ensure_catalog_columns():
         tour = db.session.get(Tour, slug)
         if tour and tour.category == 'Island experiences':
             tour.category = category
-    db.session.commit()
+    if db.session.new or db.session.dirty:
+        db.session.commit()
 
 
 DEFAULT_TOURS = (
@@ -266,47 +268,57 @@ DEFAULT_TOURS = (
 
 DEFAULT_TOUR_DETAILS = {
     'dhow': {
-        'itinerary': 'Meet your crew at the Lamu waterfront\nSail along the coastline and island channels\nReturn to the waterfront',
-        'inclusions': 'Dhow and local crew\nCoastal sailing experience',
-        'exclusions': 'Meals and personal expenses',
+        'itinerary': '08:00–08:30 | Meet the crew at Lamu waterfront; Highlights: safety briefing and dhow boarding\n08:30–10:00 | Sail the coastline and island channels; Highlights: Lamu seascapes and quiet coves\n10:00–11:30 | Stop for a swim or snorkel where conditions allow; Highlights: clear-water time and a relaxed dhow sail\n11:30–12:00 | Sail back to Lamu waterfront; Highlights: return views of the old town',
+        'inclusions': 'Dhow transport and local sailing crew\nLocal guide on board\nCoastal sailing experience',
+        'exclusions': 'Meals and snacks\nDrinking water (bring your own unless confirmed by the operator)\nSnorkeling equipment and personal expenses',
         'pickup_point': 'Lamu Town waterfront',
     },
     'old-town': {
-        'itinerary': 'Meet your local guide in Lamu Old Town\nExplore historic lanes and landmarks\nReturn to the meeting point',
-        'inclusions': 'Local walking guide',
-        'exclusions': 'Entry fees and personal purchases',
+        'itinerary': '09:00–09:15 | Meet your guide in Lamu Old Town; Highlights: route and local customs briefing\n09:15–10:30 | Walk the historic lanes and waterfront; Highlights: Swahili architecture and carved doors\n10:30–11:15 | Visit the fort and nearby heritage landmarks; Highlights: Lamu history and island life\n11:15–12:00 | Browse the market streets and return to the meeting point; Highlights: local crafts and daily life',
+        'inclusions': 'Local walking guide\nGuided Old Town route',
+        'exclusions': 'Private transport (the tour is on foot)\nDrinking water (bring your own unless confirmed by the operator)\nEntry fees and personal purchases',
         'pickup_point': 'Lamu Old Town waterfront',
     },
     'sandbank': {
-        'itinerary': 'Depart by dhow from Lamu\nEnjoy time on a nearby sandbank\nSail back to Lamu',
-        'inclusions': 'Dhow transfer\nPicnic lunch',
-        'exclusions': 'Personal expenses',
+        'itinerary': '09:00–09:30 | Meet at Lamu waterfront and board the dhow; Highlights: crew briefing and island-channel views\n09:30–10:15 | Sail to a nearby sandbank; Highlights: open-water scenery\n10:15–12:30 | Enjoy a sandbank picnic and free time; Highlights: swimming, beach time and lunch\n12:30–13:00 | Sail back to Lamu; Highlights: relaxed return along the coast',
+        'inclusions': 'Dhow transport to and from the sandbank\nLocal dhow crew\nPicnic lunch',
+        'exclusions': 'Private road transport to the waterfront\nDrinking water (bring your own unless confirmed by the operator)\nPersonal expenses and optional activities',
         'pickup_point': 'Lamu Town waterfront',
     },
     'fishing': {
-        'itinerary': 'Meet the fishing crew\nSail to local fishing grounds\nReturn to shore with the crew',
-        'inclusions': 'Boat and local fishing crew',
-        'exclusions': 'Personal fishing equipment',
+        'itinerary': '06:00–06:30 | Meet the fishing crew and prepare the boat; Highlights: tackle and safety briefing\n06:30–10:30 | Sail to local fishing grounds; Highlights: coastal fishing with the crew\n10:30–11:30 | Head back to shore; Highlights: return sail and catch discussion',
+        'inclusions': 'Fishing boat and local crew\nFishing guidance',
+        'exclusions': 'Private transport to the waterfront\nDrinking water and meals (bring your own unless confirmed by the operator)\nPersonal fishing equipment and any catch preparation',
         'pickup_point': 'Lamu Town waterfront',
     },
     'water-sports': {
-        'itinerary': 'Meet the activity team\nChoose from available water activities\nReturn to the launch point',
-        'inclusions': 'Activity briefing',
-        'exclusions': 'Optional activities not selected at booking',
+        'itinerary': '09:00–09:20 | Check in with the activity team; Highlights: safety and equipment briefing\n09:20–12:00 | Take part in the water activities selected at booking; Highlights: time on the water with the activity crew\n12:00–12:15 | Return equipment and wrap up; Highlights: final safety check and return to the launch point',
+        'inclusions': 'Activity briefing\nEquipment for activities selected and confirmed at booking',
+        'exclusions': 'Private transport to the launch point\nDrinking water (bring your own unless confirmed by the operator)\nOptional activities not selected at booking',
         'pickup_point': 'Confirm with the activity team',
     },
     'day-trips': {
-        'itinerary': 'Meet your local guide\nExplore a nearby island or coastal destination\nReturn to Lamu',
-        'inclusions': 'Local guide',
-        'exclusions': 'Meals and destination entry fees',
+        'itinerary': '08:30–09:00 | Meet your guide at Lamu waterfront; Highlights: destination and travel briefing\n09:00–11:00 | Travel by boat to the selected nearby island; Highlights: channel and coastline views\n11:00–14:00 | Explore the destination with your guide; Highlights: local landmarks and time to relax\n14:00–15:00 | Return to Lamu; Highlights: afternoon sail back to the waterfront',
+        'inclusions': 'Boat transfers to and from the selected destination\nLocal guide',
+        'exclusions': 'Private road transport to the waterfront\nMeals and drinking water (bring your own unless confirmed by the operator)\nDestination entry fees and personal expenses',
         'pickup_point': 'Lamu Town waterfront',
     },
     'cultural': {
-        'itinerary': 'Meet your local guide\nVisit cultural landmarks and local workshops\nReturn to the meeting point',
-        'inclusions': 'Local cultural guide',
-        'exclusions': 'Entry fees and personal purchases',
+        'itinerary': '09:00–09:15 | Meet your cultural guide; Highlights: route and respectful-visit briefing\n09:15–10:30 | Visit local heritage landmarks; Highlights: Swahili history and island traditions\n10:30–12:00 | Explore workshops and cultural spaces; Highlights: local craft and community stories\n12:00–13:00 | Walk back to the meeting point; Highlights: questions and recommendations from your guide',
+        'inclusions': 'Local cultural guide\nGuided walking route',
+        'exclusions': 'Private transport (the tour is on foot)\nDrinking water (bring your own unless confirmed by the operator)\nEntry fees, meals and personal purchases',
         'pickup_point': 'Lamu Old Town waterfront',
     },
+}
+
+LEGACY_DEFAULT_ITINERARIES = {
+    'dhow': 'Meet your crew at the Lamu waterfront\nSail along the coastline and island channels\nReturn to the waterfront',
+    'old-town': 'Meet your local guide in Lamu Old Town\nExplore historic lanes and landmarks\nReturn to the meeting point',
+    'sandbank': 'Depart by dhow from Lamu\nEnjoy time on a nearby sandbank\nSail back to Lamu',
+    'fishing': 'Meet the fishing crew\nSail to local fishing grounds\nReturn to shore with the crew',
+    'water-sports': 'Meet the activity team\nChoose from available water activities\nReturn to the launch point',
+    'day-trips': 'Meet your local guide\nExplore a nearby island or coastal destination\nReturn to Lamu',
+    'cultural': 'Meet your local guide\nVisit cultural landmarks and local workshops\nReturn to the meeting point',
 }
 
 DEFAULT_PROPERTIES = (
@@ -350,7 +362,7 @@ def seed_catalogue():
             tour = Tour(slug=slug, name=name, description=description, duration=duration, price=price, image_url=image_url)
             db.session.add(tour)
         defaults = DEFAULT_TOUR_DETAILS[slug]
-        if not tour.itinerary:
+        if not tour.itinerary or tour.itinerary == LEGACY_DEFAULT_ITINERARIES[slug]:
             tour.itinerary = defaults['itinerary']
         if not tour.inclusions:
             tour.inclusions = defaults['inclusions']
@@ -383,7 +395,8 @@ def seed_catalogue():
                 image_url=image_url,
                 search_location=search_location,
             ))
-    db.session.commit()
+    if db.session.new or db.session.dirty:
+        db.session.commit()
 
     legacy_reviews = Review.query.filter(Review.target_type.is_(None)).all()
     for review in legacy_reviews:
@@ -474,41 +487,42 @@ def customer_required(view):
     return wrapped
 
 
+def _valid_csrf(session_key, *, allow_form=False):
+    token = request.headers.get('X-CSRF-Token')
+    if allow_form:
+        token = token or request.form.get('csrf_token')
+    expected = session.get(session_key, '')
+    return bool(token and expected and secrets.compare_digest(token, expected))
+
+
+def _require_csrf(session_key, message, *, allow_form=False):
+    if not _valid_csrf(session_key, allow_form=allow_form):
+        return {'error': message}, 403
+    return None
+
+
 def valid_admin_csrf():
-    token = request.headers.get('X-CSRF-Token') or request.form.get('csrf_token')
-    return bool(token and secrets.compare_digest(token, session.get('admin_csrf', '')))
+    return _valid_csrf('admin_csrf', allow_form=True)
 
 
 def require_admin_csrf():
-    if not valid_admin_csrf():
-        return {'error': 'Your session expired. Refresh the page and try again.'}, 403
-    return None
+    return _require_csrf('admin_csrf', 'Your session expired. Refresh the page and try again.', allow_form=True)
 
 
 def valid_vendor_csrf():
-    token = request.headers.get('X-CSRF-Token') or request.form.get('csrf_token')
-    return bool(token and secrets.compare_digest(token, session.get('vendor_csrf', '')))
+    return _valid_csrf('vendor_csrf', allow_form=True)
 
 
 def require_vendor_csrf():
-    if not valid_vendor_csrf():
-        return {'error': 'Your session expired. Refresh the page and try again.'}, 403
-    return None
+    return _require_csrf('vendor_csrf', 'Your session expired. Refresh the page and try again.', allow_form=True)
 
 
 def require_customer_csrf():
-    token = request.headers.get('X-CSRF-Token')
-    if not token or not secrets.compare_digest(token, session.get('customer_csrf', '')):
-        return {'error': 'Your session expired. Refresh the page and try again.'}, 403
-    return None
+    return _require_csrf('customer_csrf', 'Your session expired. Refresh the page and try again.')
 
 
 def require_vendor_registration_csrf():
-    token = request.headers.get('X-CSRF-Token')
-    expected = session.get('vendor_registration_csrf', '')
-    if not token or not expected or not secrets.compare_digest(token, expected):
-        return {'error': 'Refresh the page before creating a vendor account.'}, 403
-    return None
+    return _require_csrf('vendor_registration_csrf', 'Refresh the page before creating a vendor account.')
 
 
 def safe_image_url(value):
@@ -662,7 +676,10 @@ def process_daraja_callback(payload):
     receipt = metadata.get('MpesaReceiptNumber')
     phone_number = metadata.get('PhoneNumber')
     try:
-        amount = int(metadata.get('Amount'))
+        raw_amount = metadata.get('Amount')
+        if raw_amount is None or phone_number is None:
+            raise ValueError('Missing payment amount or phone number')
+        amount = int(raw_amount)
         phone_number = str(int(phone_number))
     except (TypeError, ValueError):
         return 'Invalid payment details', 400
@@ -894,10 +911,7 @@ def send_booking_status_notification(booking: Booking) -> bool:
 
 @app.route('/')
 def index():
-    frontend_index = os.path.join(FRONTEND_DIST, 'index.html')
-    if os.path.isfile(frontend_index):
-        return send_from_directory(FRONTEND_DIST, 'index.html')
-    return send_from_directory(BASE_DIR, 'index.html')
+    return frontend_page()
 
 
 @app.route('/healthz')
@@ -917,9 +931,9 @@ def readiness_check():
 
 def frontend_page():
     frontend_index = os.path.join(FRONTEND_DIST, 'index.html')
-    if os.path.isfile(frontend_index):
-        return send_from_directory(FRONTEND_DIST, 'index.html')
-    return send_from_directory(BASE_DIR, 'index.html')
+    if not os.path.isfile(frontend_index):
+        return {'error': 'Frontend build is unavailable.'}, 503
+    return send_from_directory(FRONTEND_DIST, 'index.html')
 
 
 @app.route('/admin/login', methods=['GET', 'POST'])
@@ -928,17 +942,13 @@ def frontend_page():
 @limiter.limit('30 per hour', methods=['POST'])
 def admin_login():
     if request.method == 'GET':
-        if os.path.isfile(os.path.join(FRONTEND_DIST, 'index.html')):
-            return frontend_page()
-        return render_template('admin-login.html', setup_required=AdminAccount.query.count() == 0)
+        return frontend_page()
 
     email = request.form.get('email', '').strip().lower()
     password = request.form.get('password', '')
     admin = AdminAccount.query.filter_by(email=email).first()
     if not admin or not check_password_hash(admin.password_hash, password):
-        if os.path.isfile(os.path.join(FRONTEND_DIST, 'index.html')):
-            return redirect('/admin/login?error=Invalid%20admin%20email%20or%20password.')
-        return render_template('admin-login.html', error='Invalid admin email or password.', setup_required=AdminAccount.query.count() == 0), 401
+        return redirect('/admin/login?error=Invalid%20admin%20email%20or%20password.')
 
     session.clear()
     session['admin_id'] = admin.id
@@ -1036,9 +1046,7 @@ def admin_logout():
 @app.route('/admin', methods=['GET'])
 @admin_required
 def admin_page():
-    if os.path.isfile(os.path.join(FRONTEND_DIST, 'index.html')):
-        return frontend_page()
-    return render_template('admin.html', csrf_token=session['admin_csrf'])
+    return frontend_page()
 
 
 @app.route('/admin/dashboard', methods=['GET'])
@@ -1353,7 +1361,10 @@ def admin_update_settings():
         return response
     payload = admin_payload()
     try:
-        commission_rate = float(payload.get('commission_rate'))
+        raw_commission_rate = payload.get('commission_rate')
+        if raw_commission_rate is None:
+            raise ValueError('Commission rate is required.')
+        commission_rate = float(raw_commission_rate)
     except (TypeError, ValueError):
         return {'error': 'Commission must be a number between 10% and 20%.'}, 400
     if not math.isfinite(commission_rate) or not 10 <= commission_rate <= 20:
@@ -1675,6 +1686,8 @@ def admin_create_property():
         return {'error': str(exc)}, 400
     slug = unique_slug(str(data.get('slug') or values['name']), Property)
     admin = db.session.get(AdminAccount, session['admin_id'])
+    if admin is None:
+        return {'error': 'Admin sign-in is required.'}, 401
     listing = Property(
         slug=slug,
         owner_name=admin.name,
@@ -1862,7 +1875,10 @@ def manage_availability(scope):
             return {'error': 'A departure for this tour at that time already exists.'}, 409
         return {'schedule': schedule.to_dict()}, 201
 
-    schedule_id = request.view_args['schedule_id']
+    view_args = request.view_args or {}
+    schedule_id = view_args.get('schedule_id')
+    if schedule_id is None:
+        return {'error': 'Availability slot not found.'}, 404
     query = TourSchedule.query.filter_by(id=schedule_id)
     if scope is not None:
         query = query.join(Tour, Tour.slug == TourSchedule.tour_slug).filter(Tour.vendor_id == scope)
@@ -1909,13 +1925,19 @@ def admin_availability_item(schedule_id):
 @app.route('/api/vendor/availability', methods=['GET', 'POST'])
 @vendor_required
 def vendor_availability():
-    return manage_availability(get_current_vendor().id)
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
+    return manage_availability(vendor.id)
 
 
 @app.route('/api/vendor/availability/<int:schedule_id>', methods=['PUT', 'DELETE'])
 @vendor_required
 def vendor_availability_item(schedule_id):
-    return manage_availability(get_current_vendor().id)
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
+    return manage_availability(vendor.id)
 
 
 def save_catalog_image(owner_folder):
@@ -1963,7 +1985,10 @@ def vendor_upload_image():
     response = require_vendor_csrf()
     if response:
         return response
-    return save_catalog_image(f'vendors/{get_current_vendor().id}')
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
+    return save_catalog_image(f'vendors/{vendor.id}')
 
 
 @app.route('/api/tours/<string:tour_slug>/availability', methods=['GET'])
@@ -1985,6 +2010,8 @@ def public_tour_availability(tour_slug):
 @vendor_required
 def vendor_catalogue():
     vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
     return {
         'vendor': vendor.to_dict(),
         'csrf_token': session['vendor_csrf'],
@@ -1996,7 +2023,10 @@ def vendor_catalogue():
 @app.route('/api/vendor/bookings', methods=['GET'])
 @vendor_required
 def vendor_bookings():
-    vendor_id = get_current_vendor().id
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
+    vendor_id = vendor.id
     rows = db.session.query(Booking, Tour.name).join(
         Tour, Tour.slug == Booking.tour
     ).filter(
@@ -2011,7 +2041,10 @@ def vendor_update_booking_status(booking_id):
     response = require_vendor_csrf()
     if response:
         return response
-    vendor_id = get_current_vendor().id
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
+    vendor_id = vendor.id
     booking = db.session.query(Booking).join(
         Tour, Tour.slug == Booking.tour
     ).filter(
@@ -2061,6 +2094,8 @@ def vendor_create_tour():
     except ValueError as exc:
         return {'error': str(exc)}, 400
     vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
     slug = unique_slug(str(data.get('slug') or values['name']), Tour)
     tour = Tour(slug=slug, vendor_id=vendor.id, **values)
     db.session.add(tour)
@@ -2075,6 +2110,8 @@ def vendor_update_tour(slug):
     if response:
         return response
     vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
     tour = Tour.query.filter_by(slug=slug, vendor_id=vendor.id).first()
     if not tour:
         return {'error': 'Tour not found.'}, 404
@@ -2111,6 +2148,8 @@ def vendor_create_property():
     except ValueError as exc:
         return {'error': str(exc)}, 400
     vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
     slug = unique_slug(str(data.get('slug') or values['name']), Property)
     listing = Property(
         slug=slug,
@@ -2131,6 +2170,8 @@ def vendor_update_property(property_id):
     if response:
         return response
     vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Vendor sign-in is required.'}, 401
     listing = Property.query.filter_by(id=property_id, vendor_id=vendor.id).first()
     if not listing:
         return {'error': 'Property not found.'}, 404
@@ -2295,10 +2336,7 @@ def currency_info():
 @limiter.limit('3 per hour', methods=['POST'])
 def register():
     if request.method == 'GET':
-        frontend_index = os.path.join(FRONTEND_DIST, 'index.html')
-        if os.path.isfile(frontend_index):
-            return send_from_directory(FRONTEND_DIST, 'index.html')
-        return send_from_directory(BASE_DIR, 'register.html')
+        return frontend_page()
 
     name = request.form.get('name', '').strip()
     email = request.form.get('email', '').strip().lower()
@@ -2329,10 +2367,7 @@ def register():
 @limiter.limit('30 per hour', methods=['POST'])
 def login():
     if request.method == 'GET':
-        frontend_index = os.path.join(FRONTEND_DIST, 'index.html')
-        if os.path.isfile(frontend_index):
-            return send_from_directory(FRONTEND_DIST, 'index.html')
-        return send_from_directory(BASE_DIR, 'login.html')
+        return frontend_page()
 
     email = request.form.get('email', '').strip().lower()
     password = request.form.get('password', '')
@@ -2346,10 +2381,14 @@ def login():
     session['customer_csrf'] = secrets.token_urlsafe(32)
     return redirect('/booking.html')
 
-@app.route('/logout')
+@app.route('/logout', methods=['POST'])
+@customer_required
 def logout():
+    response = require_customer_csrf()
+    if response:
+        return response
     session.clear()
-    return redirect('/login.html')
+    return '', 204
 
 
 def booking_change_deadline(booking):
@@ -2366,6 +2405,8 @@ def booking_change_deadline(booking):
 @customer_required
 def customer_profile():
     user = db.session.get(User, session['user_id'])
+    if user is None:
+        return {'error': 'Sign in to view and manage your bookings.'}, 401
     session.setdefault('customer_csrf', secrets.token_urlsafe(32))
     return {'customer': {'id': user.id, 'name': user.name, 'email': user.email}, 'csrf_token': session['customer_csrf']}
 
@@ -2374,6 +2415,8 @@ def customer_profile():
 @customer_required
 def customer_bookings():
     user = db.session.get(User, session['user_id'])
+    if user is None:
+        return {'error': 'Sign in to view and manage your bookings.'}, 401
     return {'bookings': [
         item.to_dict()
         for item in Booking.query.filter_by(user_id=user.id).order_by(Booking.created_at.desc()).all()
@@ -2517,6 +2560,18 @@ def uploaded_catalog_image(filename):
     return send_from_directory(UPLOAD_DIR, filename)
 
 
+@app.route('/images/<path:filename>')
+def bundled_image(filename):
+    """Serve the bundled catalogue images used by the React frontend."""
+    return send_from_directory(os.path.join(BASE_DIR, 'images'), filename)
+
+
+@app.route('/pictures/<path:filename>')
+def bundled_picture(filename):
+    """Serve the bundled property and destination pictures."""
+    return send_from_directory(os.path.join(BASE_DIR, 'pictures'), filename)
+
+
 @app.route('/<path:filename>')
 def static_files(filename):
     allowed_extensions = {'.html', '.css', '.js', '.svg', '.ico', '.jpg', '.jpeg', '.png', '.gif', '.webp'}
@@ -2529,7 +2584,9 @@ def static_files(filename):
         return send_from_directory(FRONTEND_DIST, filename)
     if filename.endswith('.html') and os.path.isfile(frontend_index):
         return send_from_directory(FRONTEND_DIST, 'index.html')
-    return send_from_directory(BASE_DIR, filename)
+    if filename == 'logo.svg' and os.path.isfile(os.path.join(BASE_DIR, filename)):
+        return send_from_directory(BASE_DIR, filename)
+    return {'error': 'Not found'}, 404
 
 @app.route('/contact-submit', methods=['POST'])
 @limiter.limit('10 per hour', methods=['POST'])
@@ -2552,38 +2609,7 @@ def contact_submit():
     if request.is_json:
         return {'message': 'Your message has been received.', 'email_sent': email_sent}, 201
 
-    return render_template_string(
-        '''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Message Sent - Lamu Tours</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #eef2f7; margin: 0; padding: 2rem; color: #1e3c72; }
-        .card { max-width: 600px; margin: 0 auto; background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); }
-        a { color: #ff7e3f; text-decoration: none; font-weight: 600; }
-        a:hover { text-decoration: underline; }
-        .status { margin-top: 1rem; font-weight: 700; }
-        dl { margin-top: 1rem; }
-        dt { font-weight: 700; margin-top: 1rem; }
-        dd { margin-left: 0; margin-bottom: 0.75rem; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>Thank you, {{ name }}!</h1>
-        <p>Your message has been received and stored successfully.</p>
-        <p class="status">{% if email_sent %}A notification email was sent to the support team.{% else %}Email notification could not be sent. Please check server email settings.{% endif %}</p>
-        <dl>
-            <dt>Email</dt><dd>{{ email }}</dd>
-            <dt>Subject</dt><dd>{{ subject }}</dd>
-            <dt>Message</dt><dd>{{ message }}</dd>
-        </dl>
-        <p><a href="/contact.html">Return to Contact page</a></p>
-    </div>
-</body>
-</html>''', email_sent=email_sent, **submission)
+    return redirect('/contact.html?sent=1')
 
 @app.route('/booking-confirmation', methods=['POST'])
 @limiter.limit('10 per hour', methods=['POST'])
@@ -2788,134 +2814,7 @@ def daraja_callback():
 @app.route('/dashboard', methods=['GET'])
 @admin_required
 def dashboard():
-    if os.path.isfile(os.path.join(FRONTEND_DIST, 'index.html')):
-        return frontend_page()
-    total_submissions = Submission.query.count()
-    total_bookings = Booking.query.count()
-    recent_submissions = Submission.query.order_by(Submission.timestamp.desc()).limit(20).all()
-    recent_bookings = Booking.query.order_by(Booking.created_at.desc()).limit(20).all()
-    return render_template_string(
-        '''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Lamu Tours</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }
-        header { background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color: white; padding: 2rem 1rem; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-        h1 { margin: 0; font-size: 3em; }
-        nav { background: linear-gradient(90deg, #2a5298 0%, #1e3c72 100%); padding: 0.8rem; display: flex; justify-content: center; flex-wrap: wrap; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        nav a { color: white; text-decoration: none; margin: 0 1rem; padding: 0.7rem 1rem; border-radius: 6px; transition: all 0.3s ease; font-weight: 500; }
-        nav a:hover { background-color: #ff9a56; color: #1e3c72; transform: translateY(-2px); }
-        .container { max-width: 1200px; margin: 2rem auto; padding: 2rem; background-color: white; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 1rem; margin-bottom: 2rem; }
-        .card { background: #f9f9f9; padding: 1.5rem; border-radius: 12px; border-left: 4px solid #ff9a56; }
-        .card h2 { margin-top: 0; font-size: 1.25rem; color: #1e3c72; }
-        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-        th, td { padding: 0.9rem 0.75rem; text-align: left; border-bottom: 1px solid #e0e0e0; }
-        th { background: #f0f8ff; }
-        tr:hover { background: #fafafa; }
-        .badge { display: inline-flex; align-items: center; padding: 0.35rem 0.65rem; border-radius: 999px; font-size: 0.9rem; background: #e0f4ff; color: #1e3c72; }
-    </style>
-</head>
-<body>
-    <header>
-        <h1>Admin Dashboard</h1>
-    </header>
-    <nav>
-        <a href="index.html">Home</a>
-        <a href="tours.html">Tours</a>
-        <a href="booking.html">Booking</a>
-        <a href="about-lamu.html">About Lamu</a>
-        <a href="contact.html">Contact</a>
-    </nav>
-    <div class="container">
-        <div class="stats">
-            <div class="card">
-                <h2>Total Contact Messages</h2>
-                <p class="badge">{{ total_submissions }}</p>
-            </div>
-            <div class="card">
-                <h2>Total Booking Requests</h2>
-                <p class="badge">{{ total_bookings }}</p>
-            </div>
-            <div class="card">
-                <h2>Recent Messages</h2>
-                <p class="badge">Showing latest {{ recent_submissions|length }}</p>
-            </div>
-            <div class="card">
-                <h2>Recent Bookings</h2>
-                <p class="badge">Showing latest {{ recent_bookings|length }}</p>
-            </div>
-        </div>
-
-        <h2>Latest Contact Submissions</h2>
-        {% if recent_submissions %}
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Subject</th>
-                    <th>Received</th>
-                    <th>Email Sent</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in recent_submissions %}
-                <tr>
-                    <td>{{ item.id }}</td>
-                    <td>{{ item.name }}</td>
-                    <td>{{ item.email }}</td>
-                    <td>{{ item.subject }}</td>
-                    <td>{{ item.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-                    <td>{{ 'Yes' if item.email_sent else 'No' }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p>No submissions have been received yet.</p>
-        {% endif %}
-
-        <h2>Latest Booking Requests</h2>
-        {% if recent_bookings %}
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Phone</th>
-                    <th>Tour</th>
-                    <th>Date</th>
-                    <th>Time</th>
-                    <th>Guests</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in recent_bookings %}
-                <tr>
-                    <td>{{ item.id }}</td>
-                    <td>{{ item.name }}</td>
-                    <td>{{ item.email }}</td>
-                    <td>{{ item.phone }}</td>
-                    <td>{{ item.tour }}</td>
-                    <td>{{ item.date }}</td>
-                    <td>{{ item.time }}</td>
-                    <td>{{ item.guests }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p>No booking requests have been received yet.</p>
-        {% endif %}
-    </div>
-</body>
-</html>''', total_submissions=total_submissions, total_bookings=total_bookings, recent_submissions=recent_submissions, recent_bookings=recent_bookings)
+    return frontend_page()
 
 @app.route('/submissions', methods=['GET'])
 @admin_required
