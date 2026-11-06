@@ -4,6 +4,7 @@ __pycache__/
 venv/
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
 .env
 .env.*
 !.env.example
@@ -13,10 +14,10 @@ frontend/dist/
 instance/
 uploads/
 .DS_Store
-
-# Local infrastructure caches and state files
-.terraform/
-*.tfstate
-*.tfstate.*
-*.tfvars
-*.tfvars.json
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.log
+*.swp
+*.swo

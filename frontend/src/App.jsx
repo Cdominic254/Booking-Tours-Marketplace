@@ -16,8 +16,8 @@ const primaryLinks = [
   ['/index.html', 'Home'],
   ['/tours.html', 'Tours'],
   ['/booking.html', 'Plan your trip'],
-  ['/about-lamu.html', 'About Lamu'],
   ['/contact.html', 'Contact'],
+  ['/about-lamu.html', 'About Lamu'],
 ];
 const legacyTourSlugs = ['dhow', 'old-town', 'sandbank', 'fishing', 'cultural', 'water-sports', 'day-trips'];
 const fallbackImage = '/images/Spiritedpursuit_leelitumbe-106_lamu_kenya.webp';
@@ -62,9 +62,27 @@ function ButtonLink({ href, children, secondary = false, className = '' }) {
   );
 }
 
+function isCurrentNavigationLink(href, pathname) {
+  return pathname === href
+    || (href === '/index.html' && pathname === '/')
+    || (href === '/tours.html' && pathname === '/tour-details.html');
+}
+
 function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [language, setLanguage] = useState(document.documentElement.lang === 'sw' ? 'sw' : 'en');
+  const [signedIn, setSignedIn] = useState(false);
+  const pathname = window.location.pathname;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/customer/profile', { headers: { Accept: 'application/json' }, signal: controller.signal })
+      .then((response) => setSignedIn(response.ok))
+      .catch((error) => {
+        if (error.name !== 'AbortError') setSignedIn(false);
+      });
+    return () => controller.abort();
+  }, []);
 
   function toggleLanguage() {
     const nextLanguage = language === 'en' ? 'sw' : 'en';
@@ -74,60 +92,64 @@ function Header() {
 
   return (
     <header className="relative z-20 border-b border-[#e9e5db] bg-[#fbfaf6] shadow-sm shadow-sky-950/5">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
+      <div className="mx-auto grid max-w-7xl grid-cols-[1fr_auto] items-center gap-x-4 gap-y-3 px-5 py-4 sm:px-8">
         <a className="brand-lockup flex shrink-0 items-center gap-3 sm:gap-4" href="/index.html" aria-label="Lamu Tours — island experiences in Kenya">
-          <img className="brand-mark h-14 w-14 sm:h-16 sm:w-16" src="/logo.svg" alt="" />
+          <img className="brand-mark h-16 w-16 sm:h-20 sm:w-20" src="/logo.svg" alt="" />
           <span className="flex flex-col">
-            <span className="brand-name text-2xl font-bold tracking-tight text-[#203b35] sm:text-3xl">Lamu Tours</span>
-            <span className="brand-tagline text-[0.62rem] font-bold uppercase tracking-[0.19em] text-[#52718a] sm:text-xs">Island experiences · Kenya</span>
+            <span className="brand-name text-3xl font-bold tracking-tight text-[#203b35] sm:text-4xl">Lamu Tours</span>
+            <span className="brand-tagline text-[0.68rem] font-bold uppercase tracking-[0.16em] text-[#52718a] sm:text-sm">Island experiences · Kenya</span>
           </span>
         </a>
-        <button
-          className="rounded-lg border border-[#dedbd2] px-3 py-2 text-sm font-semibold text-[#203b35] lg:hidden"
-          type="button"
-          aria-expanded={menuOpen}
-          aria-controls="primary-navigation"
-          onClick={() => setMenuOpen(!menuOpen)}
-        >
-          {menuOpen ? 'Close' : 'Menu'}
-        </button>
+        <div className="flex items-center justify-self-end gap-2 sm:gap-3 max-[480px]:col-span-2 max-[480px]:w-full max-[480px]:justify-end">
+          <a
+            className="rounded-full bg-[#203b35] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#31554b]"
+            href={signedIn ? '/my-bookings' : '/login.html'}
+          >
+            {signedIn ? 'My account' : 'Sign in'}
+          </a>
+          <button
+            className="order-last inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#dedbd2] px-3 py-2 text-sm font-semibold text-[#52615b] hover:bg-[#eeeee6]"
+            data-language-toggle
+            type="button"
+            aria-label={language === 'en' ? 'Switch to Kiswahili' : 'Switch to English'}
+            aria-pressed={language === 'sw'}
+            title={language === 'en' ? 'Switch to Kiswahili' : 'Switch to English'}
+            onClick={toggleLanguage}
+          >
+            <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 5h9M8.5 3v2m3 0c-.8 4-3.2 7-7.5 9" />
+              <path d="M6 9c1.2 1.8 2.8 3.2 5 4.2M14 19l3.2-8 3.3 8m-5.4-2h4.3" />
+            </svg>
+            <span>{language === 'en' ? 'SW' : 'EN'}</span>
+          </button>
+          <button
+            className="order-first rounded-lg border border-[#dedbd2] px-3 py-2 text-sm font-semibold text-[#203b35] lg:hidden"
+            type="button"
+            aria-expanded={menuOpen}
+            aria-controls="primary-navigation"
+            onClick={() => setMenuOpen(!menuOpen)}
+          >
+            {menuOpen ? 'Close' : 'Menu'}
+          </button>
+        </div>
         <nav
           id="primary-navigation"
-          className={`${menuOpen ? 'absolute inset-x-0 top-full flex flex-col border-b border-[#e9e5db] bg-[#fbfaf6] p-4 shadow-lg' : 'hidden'} items-center gap-2 lg:static lg:flex lg:flex-row lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none`}
+          className={`${menuOpen ? 'absolute inset-x-0 top-full flex flex-col border-b border-[#e9e5db] bg-[#fbfaf6] p-4 shadow-lg' : 'hidden'} col-span-2 items-center gap-2 lg:static lg:flex lg:flex-row lg:justify-center lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none`}
           aria-label="Main navigation"
         >
           {primaryLinks.map(([href, label]) => (
             <a
-              className="rounded-full px-3 py-2 text-sm font-medium text-[#52615b] transition hover:bg-[#eeeee6] hover:text-[#203b35]"
+              className={`rounded-full px-3 py-2 text-sm transition ${isCurrentNavigationLink(href, pathname)
+                ? 'bg-[#eeeee6] font-bold text-[#203b35]'
+                : 'font-medium text-[#52615b] hover:bg-[#eeeee6] hover:text-[#203b35]'}`}
               href={href}
               key={href}
+              aria-current={isCurrentNavigationLink(href, pathname) ? 'page' : undefined}
               onClick={() => setMenuOpen(false)}
             >
               {label}
             </a>
           ))}
-          <a
-            className="rounded-full bg-[#203b35] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#31554b]"
-            href="/login.html"
-          >
-            Sign in
-          </a>
-          <a
-            className="rounded-full border border-[#dedbd2] px-4 py-2 text-sm font-semibold text-[#52615b] hover:bg-[#eeeee6]"
-            href="/my-bookings"
-          >
-            My account
-          </a>
-          <button
-            className="rounded-full border border-[#dedbd2] px-4 py-2 text-sm font-semibold text-[#52615b] hover:bg-[#eeeee6]"
-            data-language-toggle
-            type="button"
-            aria-label={language === 'en' ? 'Switch to Kiswahili' : 'Switch to English'}
-            aria-pressed={language === 'sw'}
-            onClick={toggleLanguage}
-          >
-            {language === 'en' ? 'Kiswahili' : 'English'}
-          </button>
         </nav>
       </div>
     </header>
@@ -164,6 +186,9 @@ function Footer() {
           <div className="mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
             <a className="hover:text-white" href="/contact.html">Contact our team</a>
             <a className="hover:text-white" href="mailto:info@lamutours.com">info@lamutours.com</a>
+            <a className="hover:text-white" href="mailto:cdominic.cm@gmail.com">cdominic.cm@gmail.com</a>
+            <a className="hover:text-white" href="mailto:justerkarendi.carlos@gmail.com">justerkarendi.carlos@gmail.com</a>
+            <a className="hover:text-white" href="tel:0704143718">0704143718</a>
             <span>Lamu Island, Kenya</span>
           </div>
         </div>
@@ -178,10 +203,42 @@ function Footer() {
 function PageShell({ children }) {
   return (
     <>
+      <a className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-full focus:bg-white focus:px-5 focus:py-3 focus:font-semibold focus:text-[#203b35] focus:shadow-xl" href="#main-content">
+        Skip to main content
+      </a>
       <Header />
-      <main>{children}</main>
+      <main id="main-content" tabIndex={-1}>{children}</main>
       <Footer />
+      <FloatingWhatsApp />
     </>
+  );
+}
+
+function FloatingWhatsApp() {
+  const [phone, setPhone] = useState(document.documentElement.dataset.whatsappPhone || '');
+  const message = "Hello, I'm planning a trip to Lamu and would like some information.";
+
+  useEffect(() => {
+    const updatePhone = () => setPhone(document.documentElement.dataset.whatsappPhone || '');
+    document.addEventListener('lamu-catalogue-ready', updatePhone);
+    updatePhone();
+    return () => document.removeEventListener('lamu-catalogue-ready', updatePhone);
+  }, []);
+
+  return (
+    <a
+      className="fixed bottom-5 right-5 z-50 inline-flex min-h-14 items-center gap-3 rounded-full bg-[#16833b] px-4 text-sm font-bold text-white shadow-xl shadow-slate-950/25 transition hover:-translate-y-1 hover:bg-[#116b30] focus-visible:outline-white sm:bottom-7 sm:right-7"
+      href={whatsappUrl(message, phone)}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Chat with Lamu Tours on WhatsApp (opens in a new tab)"
+      title="Chat with us on WhatsApp"
+    >
+      <svg aria-hidden="true" className="h-7 w-7 shrink-0" viewBox="0 0 32 32" fill="currentColor">
+        <path d="M16.04 3.2A12.75 12.75 0 0 0 5.11 22.52L3.42 28.7l6.33-1.66A12.78 12.78 0 1 0 16.04 3.2Zm0 23.24c-2 0-3.96-.54-5.67-1.56l-.4-.24-3.76.99 1-3.66-.27-.42a10.4 10.4 0 1 1 9.1 4.89Zm5.71-7.8c-.31-.16-1.84-.91-2.13-1.01-.28-.1-.49-.16-.7.16-.2.31-.8 1.01-.98 1.22-.18.2-.36.23-.67.08-.31-.16-1.3-.48-2.48-1.53-.92-.82-1.54-1.83-1.72-2.14-.18-.31-.02-.48.14-.64.14-.14.31-.36.46-.54.16-.18.2-.31.31-.52.1-.21.05-.39-.03-.54-.08-.16-.7-1.69-.96-2.31-.25-.61-.51-.52-.7-.53h-.6c-.21 0-.54.08-.82.39-.28.31-1.07 1.04-1.07 2.53s1.1 2.94 1.25 3.14c.15.21 2.15 3.29 5.2 4.61.72.31 1.28.5 1.72.64.72.23 1.37.2 1.89.12.58-.09 1.84-.75 2.1-1.48.26-.72.26-1.35.18-1.48-.08-.13-.28-.21-.59-.36Z" />
+      </svg>
+      <span className="hidden sm:inline">Chat with us</span>
+    </a>
   );
 }
 
@@ -190,7 +247,7 @@ function SectionHeading({ eyebrow, title, description, centered = false }) {
     <div className={`mb-8 ${centered ? 'mx-auto max-w-2xl text-center' : 'max-w-2xl'}`}>
       {eyebrow && <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">{eyebrow}</p>}
       <h2 className="display-font text-3xl leading-tight text-[#203b35] sm:text-4xl">{title}</h2>
-      {description && <p className="mt-4 leading-7 text-[#66736d]">{description}</p>}
+      {description && <p className="mt-4 leading-7 text-[#52615b]">{description}</p>}
     </div>
   );
 }
@@ -204,7 +261,7 @@ function LoadingState({ error, onRetry }) {
       </div>
     );
   }
-  return <p className="py-8 text-center text-[#66736d]" role="status">Loading island experiences…</p>;
+  return <p className="py-8 text-center text-[#52615b]" role="status">Loading island experiences…</p>;
 }
 
 function TourCard({ tour, currency }) {
@@ -219,9 +276,9 @@ function TourCard({ tour, currency }) {
           <h3 className="display-font text-2xl text-[#203b35]">{tour.name}</h3>
           <span className="shrink-0 rounded-full bg-[#f3eee6] px-3 py-1 text-xs font-semibold text-[#735744]">{tour.duration}</span>
         </div>
-        <p className="mt-3 line-clamp-3 min-h-[4.5rem] text-sm leading-6 text-[#66736d]">{tour.description}</p>
+        <p className="mt-3 line-clamp-3 min-h-[4.5rem] text-sm leading-6 text-[#52615b]">{tour.description}</p>
         <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#efede7] pt-4">
-          <p className="text-sm text-[#66736d]">
+          <p className="text-sm text-[#52615b]">
             From <strong className="text-base text-[#203b35]">{formatPrice(tour.price, currency)}</strong>
             <span className="block text-xs">per guest</span>
           </p>
@@ -241,8 +298,8 @@ function PropertyCard({ property, currency }) {
       <div className="p-5">
         <p className="text-xs font-bold uppercase tracking-wider text-[#a75f3a]">{property.property_type} · {property.location}</p>
         <h3 className="display-font mt-2 text-2xl text-[#203b35]">{property.name}</h3>
-        <p className="mt-2 text-sm text-[#66736d]">{property.guests} guests · {formatPrice(property.price_per_night, currency)} per night</p>
-        {property.description && <p className="mt-3 line-clamp-2 text-sm leading-6 text-[#66736d]">{property.description}</p>}
+        <p className="mt-2 text-sm text-[#52615b]">{property.guests} guests · {formatPrice(property.price_per_night, currency)} per night</p>
+        {property.description && <p className="mt-3 line-clamp-2 text-sm leading-6 text-[#52615b]">{property.description}</p>}
         <a className="mt-4 inline-flex rounded-full border border-[#203b35] px-4 py-2.5 text-sm font-semibold text-[#203b35] hover:bg-[#203b35] hover:text-white" href={`/booking.html?stay=${encodeURIComponent(property.slug)}&guests=${property.guests}`}>
           Ask us about this stay
         </a>
@@ -307,9 +364,9 @@ function ReviewPanel({ targetType, targetId, readOnly = false }) {
 
   return (
     <div className="mt-4">
-      {loading && <p className="text-sm text-[#66736d]" role="status">Loading reviews…</p>}
+      {loading && <p className="text-sm text-[#52615b]" role="status">Loading reviews…</p>}
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-800" role="alert">{error}</p>}
-      {!loading && !error && reviews.length === 0 && <p className="text-sm text-[#66736d]">{readOnly ? 'No guest reviews yet.' : 'No reviews yet. Be the first to share your experience.'}</p>}
+      {!loading && !error && reviews.length === 0 && <p className="text-sm text-[#52615b]">{readOnly ? 'No guest reviews yet.' : 'No reviews yet. Be the first to share your experience.'}</p>}
       <div className="mt-3 space-y-3">
         {reviews.map((review) => (
           <article className="rounded-xl bg-[#f5f3ed] p-3" key={review.id}>
@@ -385,7 +442,7 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
             <a className={`feature-card feature-card-${number} rounded-2xl border border-[#e9e5db] bg-white p-6 transition hover:border-[#c98d6b] hover:shadow-lg`} href={href} key={number}>
               <span className="text-sm font-bold text-[#b96e45]">{number}</span>
               <h3 className="display-font mt-5 text-2xl text-[#203b35]">{title}</h3>
-              <p className="mt-3 leading-6 text-[#66736d]">{description}</p>
+              <p className="mt-3 leading-6 text-[#52615b]">{description}</p>
             </a>
           ))}
         </div>
@@ -395,7 +452,7 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         <div className="coast-gallery mx-auto grid max-w-7xl gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[
             ['/pictures/187168867.jpg', 'Turquoise coastal waters', 'Blue-water days'],
-            ['/pictures/22151750.jpg', 'Traditional dhow boats on the water', 'Made for the sea'],
+            ['/images/IMG_2026-03-23-17-36-36-712.jpg', 'Traditional dhow boats on the water', 'Made for the sea'],
             ['/pictures/426299433.jpg', 'Island coastline in Lamu', 'Find your horizon'],
             ['/pictures/552015001.jpg', 'Lamu waterfront scene', 'A life by the coast'],
           ].map(([src, alt, caption]) => (
@@ -416,7 +473,7 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
           {loading || error ? <LoadingState error={error} onRetry={retry} /> : (
             <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
               {catalogue.tours.slice(0, 3).map((tour) => <TourCard currency={currency} key={tour.slug} tour={tour} />)}
-              {catalogue.tours.length === 0 && <p className="text-[#66736d]">New island experiences are on the way. Check back soon.</p>}
+              {catalogue.tours.length === 0 && <p className="text-[#52615b]">New island experiences are on the way. Check back soon.</p>}
             </div>
           )}
         </div>
@@ -436,7 +493,7 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
                   <img className="h-48 w-full object-cover" src={imageUrl(destination.image_url)} alt={destination.name} loading="lazy" />
                   <div className="p-5">
                     <h3 className="display-font text-2xl text-[#203b35]">{destination.name}</h3>
-                    <p className="mt-2 min-h-12 text-sm leading-6 text-[#66736d]">{destination.description}</p>
+                    <p className="mt-2 min-h-12 text-sm leading-6 text-[#52615b]">{destination.description}</p>
                     <a
                       className="action-link mt-4"
                       href="#places-to-stay"
@@ -484,7 +541,7 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         {loading || error ? <LoadingState error={error} onRetry={retry} /> : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {visibleProperties.slice(0, 3).map((property) => <PropertyCard currency={currency} key={property.slug} property={property} />)}
-            {visibleProperties.length === 0 &&             <p className="text-[#66736d]">We couldn’t find a stay with that combination. Try another neighborhood or a smaller guest count.</p>}
+            {visibleProperties.length === 0 &&             <p className="text-[#52615b]">We couldn’t find a stay with that combination. Try another neighborhood or a smaller guest count.</p>}
             {visibleProperties.length > 3 &&             <a className="flex min-h-56 items-center justify-center rounded-2xl border border-dashed border-[#c8c9be] font-semibold text-[#203b35] hover:bg-white" href="/booking.html">Looking for something else? Ask our local team →</a>}
           </div>
         )}
@@ -522,8 +579,8 @@ function ToursPage({ catalogue, loading, error, retry, currency }) {
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {visibleTours.map((tour) => <TourCard currency={currency} key={tour.slug} tour={tour} />)}
-            {catalogue.tours.length === 0 && <p className="text-[#66736d]">Tours are being added. Please check back soon.</p>}
-            {catalogue.tours.length > 0 && visibleTours.length === 0 && <p className="text-[#66736d]">No experiences are currently listed in this category.</p>}
+            {catalogue.tours.length === 0 && <p className="text-[#52615b]">Tours are being added. Please check back soon.</p>}
+            {catalogue.tours.length > 0 && visibleTours.length === 0 && <p className="text-[#52615b]">No experiences are currently listed in this category.</p>}
           </div>
           </>
         )}
@@ -544,7 +601,7 @@ function PageBanner({ eyebrow, title, description }) {
   );
 }
 
-function BookingPage({ catalogue, loading, error, retry }) {
+function BookingPage({ catalogue, loading, error, retry, currency }) {
   const params = new URLSearchParams(window.location.search);
   const requestedTour = params.get('tour') || params.get('stay') || '';
   const requestedSchedule = params.get('schedule_id') || '';
@@ -564,6 +621,8 @@ function BookingPage({ catalogue, loading, error, retry }) {
   const [checkOutDate, setCheckOutDate] = useState(initialCheckOut);
   const [stayQuoteUrl, setStayQuoteUrl] = useState('');
   const [language, setLanguage] = useState(document.documentElement.lang === 'sw' ? 'sw' : 'en');
+  const [travelerType, setTravelerType] = useState(currency.code === 'KES' ? 'domestic' : 'international');
+  const [travelerChoiceTouched, setTravelerChoiceTouched] = useState(false);
   const allOptions = [
     ...catalogue.tours.map((tour) => ({ ...tour, kind: 'tour', price: tour.price })),
     ...catalogue.properties.map((property) => ({ ...property, kind: 'stay', price: property.price_per_night })),
@@ -587,6 +646,10 @@ function BookingPage({ catalogue, loading, error, retry }) {
     document.addEventListener('lamu-language-changed', syncLanguage);
     return () => document.removeEventListener('lamu-language-changed', syncLanguage);
   }, []);
+
+  useEffect(() => {
+    if (!travelerChoiceTouched) setTravelerType(currency.code === 'KES' ? 'domestic' : 'international');
+  }, [currency.code, travelerChoiceTouched]);
 
   useEffect(() => {
     if (!selectedListing || selectedListing.kind !== 'tour') {
@@ -635,9 +698,16 @@ function BookingPage({ catalogue, loading, error, retry }) {
       }
       const dateLabel = (date) => new Date(`${date}T12:00:00`).toLocaleDateString(language === 'sw' ? 'sw-KE' : 'en-KE');
       const details = String(data.message || '').trim();
+      const domesticPhone = String(data.phone || '').replace(/\D/g, '').replace(/^0/, '').replace(/^254/, '');
+      const contactLines = [
+        `Traveler: ${data.name} (${travelerType === 'domestic' ? 'Traveling from Kenya' : `International traveler from ${data.country_of_residence}`})`,
+        `Email: ${data.email}`,
+        `Phone: ${travelerType === 'domestic' ? `+254${domesticPhone}` : data.international_phone}`,
+      ];
       const message = language === 'sw'
         ? [
           'Habari Lamu Tours, tafadhali thibitisheni malazi haya kabla sijalipa:',
+          ...contactLines,
           `Malazi: ${selectedListing.name} (${selectedListing.location})`,
           `Kuingia: ${dateLabel(checkInDate)}`,
           `Kutoka: ${dateLabel(checkOutDate)} (${stayNights} usiku)`,
@@ -648,15 +718,39 @@ function BookingPage({ catalogue, loading, error, retry }) {
         ].join('\n')
         : [
           'Hello Lamu Tours, please confirm this stay before I pay:',
+          ...contactLines,
           `Stay: ${selectedListing.name} (${selectedListing.location})`,
           `Check-in: ${dateLabel(checkInDate)}`,
           `Check-out: ${dateLabel(checkOutDate)} (${stayNights} ${stayNights === 1 ? 'night' : 'nights'})`,
           `Guests: ${guests}`,
           `Estimated stay total: ${formatKenyanShillings(total)}`,
           ...(details ? [`Notes: ${details}`] : []),
-          'Please confirm availability and share the secure M-Pesa payment steps.',
+          travelerType === 'domestic'
+            ? 'Please confirm availability and share the secure M-Pesa payment steps.'
+            : 'Please confirm availability and share international payment options. I understand this request does not hold the stay until confirmed.',
         ].join('\n');
       setStayQuoteUrl(whatsappUrl(message, catalogue.whatsapp_business_phone));
+      return;
+    }
+    if (travelerType === 'international') {
+      const dateLabel = selectedSchedule
+        ? `${selectedSchedule.starts_at.slice(0, 10)} at ${selectedSchedule.starts_at.slice(11, 16)} Lamu time`
+        : `${data.date} at ${data.time} Lamu time`;
+      const details = String(data.message || '').trim();
+      const message = [
+        'Hello Lamu Tours, I am an international traveler and would like to arrange this booking:',
+        `Name: ${data.name}`,
+        `Email: ${data.email}`,
+        `Country: ${data.country_of_residence}`,
+        `Phone/WhatsApp: ${data.international_phone}`,
+        `Experience: ${selectedListing?.name || data.tour}`,
+        `Preferred departure: ${dateLabel}`,
+        `Guests: ${guests}`,
+        `Estimated total: ${formatKenyanShillings(total)}${currency.code !== 'KES' ? ` (approximately ${formatPrice(total, currency)})` : ''}`,
+        ...(details ? [`Notes: ${details}`] : []),
+        'Please confirm availability and share international payment options. I understand this request does not reserve a place until confirmed.',
+      ].join('\n');
+      window.open(whatsappUrl(message, catalogue.whatsapp_business_phone), '_blank', 'noopener,noreferrer');
       return;
     }
     setStayQuoteUrl('');
@@ -686,7 +780,7 @@ function BookingPage({ catalogue, loading, error, retry }) {
       <PageBanner
         eyebrow={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Ombi la malazi' : 'Stay enquiry') : 'A few details, then the island is closer'}
         title={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Panga kukaa kwako Lamu.' : 'Plan your stay in Lamu.') : 'Let’s bring your Lamu plans to life.'}
-        description={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Chagua tarehe zako na uombe mwenyeji athibitishe nafasi kupitia WhatsApp kabla ya malipo.' : 'Choose your dates and ask the host to confirm availability on WhatsApp before payment.') : 'Choose an experience and available departure, then confirm your booking securely with M-Pesa.'}
+        description={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Chagua tarehe zako na uombe mwenyeji athibitishe nafasi kupitia WhatsApp kabla ya malipo.' : 'Choose your dates and ask the host to confirm availability on WhatsApp before payment.') : travelerType === 'domestic' ? 'Choose an experience and available departure, then confirm your booking securely with M-Pesa.' : 'Choose an experience and departure, then contact our local team to confirm availability and arrange payment.'}
       />
       <div className="mx-auto max-w-7xl px-5 pt-10 sm:px-8 sm:pt-14">
         <SmartTripPlanner tours={catalogue.tours} properties={catalogue.properties} destinations={catalogue.destinations} whatsappPhone={catalogue.whatsapp_business_phone} guests={Number(guests) || 1} />
@@ -694,7 +788,7 @@ function BookingPage({ catalogue, loading, error, retry }) {
       <section className="mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div id="booking-checkout" className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-9">
           <h2 className="display-font text-3xl text-[#203b35]">{selectedListing?.kind === 'stay' ? 'Ask about your stay' : 'Make it a date with the coast.'}</h2>
-          <p className="mt-2 text-sm leading-6 text-[#66736d]">{selectedListing?.kind === 'stay' ? 'Send these dates to our local team. No payment is taken until the host confirms availability.' : 'Choose a published departure, tell us who’s coming, and approve the M-Pesa prompt sent to your Kenyan mobile number. Your booking is confirmed after payment is verified.'}</p>
+          <p className="mt-2 text-sm leading-6 text-[#52615b]">{selectedListing?.kind === 'stay' ? 'Send these dates to our local team. No payment is taken until the host confirms availability.' : travelerType === 'domestic' ? 'Choose a published departure, tell us who’s coming, and approve the M-Pesa prompt sent to your Kenyan mobile number. Your booking is confirmed after payment is verified.' : 'Share your details with our local team on WhatsApp. We’ll confirm the departure and provide an international payment option.'}</p>
           {errorMessage && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{errorMessage}</p>}
           {submitError && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{submitError}</p>}
           {stayQuoteUrl && <div className="mt-5 rounded-xl bg-[#e9eee8] p-4" role="status"><p className="text-sm text-[#203b35]">Your stay request is ready. The host will confirm dates before payment.</p><a className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={stayQuoteUrl} target="_blank" rel="noreferrer">{catalogue.whatsapp_business_phone ? 'Message Lamu Tours on WhatsApp' : 'Share enquiry in WhatsApp'}</a></div>}
@@ -708,11 +802,34 @@ function BookingPage({ catalogue, loading, error, retry }) {
                   {catalogue.properties.length > 0 && <optgroup label="Places to stay">{catalogue.properties.map((property) => <option key={property.slug} value={property.slug}>{property.name} — {formatKenyanShillings(property.price_per_night)} / night</option>)}</optgroup>}
                 </select>
               </label>
-              {selectedListing?.kind !== 'stay' && <>
+              {selectedListing && <>
                 <label><span className="field-label">Full name</span><input className="field" name="name" autoComplete="name" required /></label>
                 <label><span className="field-label">Email address</span><input className="field" name="email" type="email" autoComplete="email" required /></label>
-                <label><span className="field-label">Country code</span><input className="field" name="country_code" value="+254" readOnly aria-readonly="true" /></label>
-                <label><span className="field-label">Phone number</span><input className="field" name="phone" type="tel" inputMode="numeric" pattern="(?:0?[17][0-9]{8}|254[17][0-9]{8})" title="Enter a Kenyan mobile number, with or without the leading 0 or 254" required /></label>
+                <fieldset className="rounded-2xl border border-[#d1e0e2] p-4 sm:col-span-2">
+                  <legend className="px-1 text-sm font-semibold text-[#203b35]">Where are you traveling from?</legend>
+                  <div className="mt-1 grid gap-3 sm:grid-cols-2">
+                    <label className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm font-semibold ${travelerType === 'domestic' ? 'border-[#17617a] bg-[#e6f0f1] text-[#123b52]' : 'border-[#d1e0e2] text-[#52615b]'}`}>
+                      <input className="accent-[#17617a]" type="radio" name="traveler_type" value="domestic" checked={travelerType === 'domestic'} onChange={() => { setTravelerChoiceTouched(true); setTravelerType('domestic'); }} />
+                      Traveling from Kenya
+                    </label>
+                    <label className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm font-semibold ${travelerType === 'international' ? 'border-[#17617a] bg-[#e6f0f1] text-[#123b52]' : 'border-[#d1e0e2] text-[#52615b]'}`}>
+                      <input className="accent-[#17617a]" type="radio" name="traveler_type" value="international" checked={travelerType === 'international'} onChange={() => { setTravelerChoiceTouched(true); setTravelerType('international'); }} />
+                      Traveling from abroad
+                    </label>
+                  </div>
+                </fieldset>
+                {travelerType === 'domestic' ? <>
+                  <label><span className="field-label">M-Pesa country code</span><input className="field" name="country_code" value="+254" readOnly aria-readonly="true" /></label>
+                  <label><span className="field-label">M-Pesa phone number</span><input className="field" name="phone" type="tel" inputMode="numeric" autoComplete="tel-national" pattern="(?:0?[17][0-9]{8}|254[17][0-9]{8})" title="Enter a Kenyan mobile number, with or without the leading 0 or 254" required /></label>
+                </> : <>
+                  <label><span className="field-label">Country of residence</span><input className="field" name="country_of_residence" autoComplete="country-name" placeholder="For example, United Kingdom" required /></label>
+                  <label><span className="field-label">Phone / WhatsApp (include country code)</span><input className="field" name="international_phone" type="tel" autoComplete="tel" placeholder="For example, +44 7700 900123" required /></label>
+                </>}
+                <p className="rounded-xl bg-[#e6f0f1] p-4 text-sm leading-6 text-[#365565] sm:col-span-2" role="note">
+                  {travelerType === 'domestic'
+                    ? 'Pay securely with an M-Pesa prompt sent to your Kenyan mobile number.'
+                    : 'We’ll send your details to our team on WhatsApp to confirm availability and arrange an international payment option. Your place is not reserved until we confirm it.'}
+                </p>
               </>}
               {selectedListing?.kind === 'tour' ? (
                 <>
@@ -738,7 +855,7 @@ function BookingPage({ catalogue, loading, error, retry }) {
                   <input type="hidden" name="time" value={selectedSchedule?.starts_at.slice(11, 16) || ''} />
                   <input type="hidden" name="schedule_id" value={scheduleId} />
                   {availabilityError && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-800 sm:col-span-2" role="alert">{availabilityError}</p>}
-                  {!availabilityLoading && !availabilityError && schedules.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#66736d] sm:col-span-2">No departures are available yet. Contact our team and we’ll help arrange a date.</p>}
+                  {!availabilityLoading && !availabilityError && schedules.length === 0 && <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b] sm:col-span-2">No departures are available yet. Contact our team and we’ll help arrange a date.</p>}
                 </>
               ) : selectedListing?.kind === 'stay' ? (
                 <>
@@ -756,33 +873,37 @@ function BookingPage({ catalogue, loading, error, retry }) {
                 <input className="field" name="guests" type="number" min={selectedListing?.kind === 'tour' ? selectedListing.min_group_size : 1} max={selectedListing?.kind === 'tour' ? Math.min(selectedListing.max_group_size, selectedSchedule?.remaining || selectedListing.max_group_size) : selectedListing?.guests} value={guests} onChange={(event) => { setGuests(event.target.value); setStayQuoteUrl(''); }} required />
               </label>
               <label className="sm:col-span-2">
-                <span className="field-label">Anything we should know? <span className="font-normal text-[#7a857f]">(optional)</span></span>
+                <span className="field-label">Anything we should know? <span className="font-normal text-[#52615b]">(optional)</span></span>
                 <textarea className="field min-h-28 resize-y" name="message" rows="4" />
               </label>
               <div className="rounded-xl bg-[#f5f3ed] p-4 sm:col-span-2">
                 <div className="flex items-center justify-between gap-4">
-                  <span className="text-sm text-[#66736d]">Estimated total</span>
+                  <span className="text-sm text-[#52615b]">Estimated total</span>
                   <strong className="text-lg text-[#203b35]">{formatKenyanShillings(total)}</strong>
                 </div>
-                <p className="mt-1 text-xs text-[#7a857f]">{selectedListing?.kind === 'stay'
+                <p className="mt-1 text-xs text-[#52615b]">{selectedListing?.kind === 'stay'
                   ? language === 'sw'
                     ? `${stayNights} usiku kwa ${formatKenyanShillings(selectedListing.price)} kwa usiku. Hakuna malipo hadi uthibitisho.`
                     : `${stayNights} ${stayNights === 1 ? 'night' : 'nights'} at ${formatKenyanShillings(selectedListing.price)} per night. No charge until confirmed.`
-                  : 'Charged in Kenyan shillings (KES). Tour prices are per person.'}</p>
+                  : `Charged in Kenyan shillings (KES). Tour prices are per person.${currency.code !== 'KES' ? ` Approximate total in ${currency.code}: ${formatPrice(total, currency)}.` : ''}`}</p>
               </div>
               <button className="min-h-12 rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38] disabled:opacity-50 sm:col-span-2" type="submit" disabled={submitting || (selectedListing?.kind === 'tour' && (!selectedSchedule || Number(guests) > selectedSchedule.remaining || availabilityLoading)) || (selectedListing?.kind === 'stay' && stayNights < 1)}>
-                {selectedListing?.kind === 'stay' ? 'Request availability on WhatsApp' : submitting ? 'Opening secure checkout…' : 'Continue to secure payment'}
+                {selectedListing?.kind === 'stay'
+                  ? 'Request availability on WhatsApp'
+                  : travelerType === 'international'
+                    ? 'Continue on WhatsApp to arrange booking'
+                    : submitting ? 'Opening secure checkout…' : 'Continue to secure payment'}
               </button>
             </form>
           )}
         </div>
         <aside className="h-fit rounded-3xl bg-[#e9eee8] p-6 sm:p-7">
           <h2 className="display-font text-2xl text-[#203b35]">Need a hand?</h2>
-          <p className="mt-3 text-sm leading-6 text-[#59675f]">Not sure which experience fits? Tell us what you’re looking for and our local team can help.</p>
+          <p className="mt-3 text-sm leading-6 text-[#52615b]">Not sure which experience fits? Tell us what you’re looking for and our local team can help.</p>
           <ButtonLink className="mt-5" href="/contact.html">Talk to our team →</ButtonLink>
-          <div className="mt-7 border-t border-[#d7dfd5] pt-6 text-sm text-[#59675f]">
+          <div className="mt-7 border-t border-[#d7dfd5] pt-6 text-sm text-[#52615b]">
             <p className="font-semibold text-[#203b35]">A note about booking</p>
-            <p className="mt-2 leading-6">{selectedListing?.kind === 'stay' ? 'We’ll confirm availability with the host on WhatsApp. No payment is taken before confirmation.' : 'Payments are requested securely through M-Pesa STK Push in Kenyan shillings. Your booking is confirmed only after Daraja verifies successful payment.'}</p>
+            <p className="mt-2 leading-6">{selectedListing?.kind === 'stay' ? 'We’ll confirm availability with the host on WhatsApp. No payment is taken before confirmation.' : travelerType === 'domestic' ? 'Payments are requested securely through M-Pesa STK Push in Kenyan shillings. Your booking is confirmed only after Daraja verifies successful payment.' : 'International requests are sent to our team on WhatsApp. Your booking is not held until the team confirms availability and payment arrangements.'}</p>
           </div>
         </aside>
       </section>
@@ -798,8 +919,8 @@ function AboutPage() {
         <img className="h-[26rem] w-full rounded-3xl object-cover" src="/images/Lamu,_Kenya_(45275410485).jpeg" alt="Historic Lamu town beside the water" />
         <div>
           <SectionHeading eyebrow="Meet Lamu" title="Where living culture meets the Indian Ocean." />
-          <p className="leading-7 text-[#66736d]">Off Kenya’s northern coast, Lamu is one of East Africa’s oldest and best-preserved Swahili settlements. Coral-stone buildings, intricately carved doors, and winding lanes hold traces of generations shaped by Indian Ocean trade and travel.</p>
-          <p className="mt-4 leading-7 text-[#66736d]">Life here moves at a gentler pace—on foot, by dhow, and along familiar neighborhood paths. Lamu Old Town was recognized as a UNESCO World Heritage Site in 2001, and its sense of place is still part of daily life.</p>
+          <p className="leading-7 text-[#52615b]">Off Kenya’s northern coast, Lamu is one of East Africa’s oldest and best-preserved Swahili settlements. Coral-stone buildings, intricately carved doors, and winding lanes hold traces of generations shaped by Indian Ocean trade and travel.</p>
+          <p className="mt-4 leading-7 text-[#52615b]">Life here moves at a gentler pace—on foot, by dhow, and along familiar neighborhood paths. Lamu Old Town was recognized as a UNESCO World Heritage Site in 2001, and its sense of place is still part of daily life.</p>
           <ButtonLink className="mt-7" href="/tours.html">Experience Lamu with a local guide</ButtonLink>
         </div>
       </section>
@@ -816,7 +937,7 @@ function AboutPage() {
                 <img className="h-56 w-full object-cover" src={`/${image}`} alt={title} loading="lazy" />
                 <div className="p-5">
                   <h3 className="display-font text-2xl text-[#203b35]">{title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-[#66736d]">{description}</p>
+                  <p className="mt-2 text-sm leading-6 text-[#52615b]">{description}</p>
                 </div>
               </article>
             ))}
@@ -864,7 +985,13 @@ function ContactPage() {
           <SectionHeading eyebrow="Get in touch" title="Tell us what you have in mind." description="A tour, a place to stay, a question about your plans—we’re listening. Send a note and our team will follow up." />
           <div className="rounded-2xl bg-[#e9eee8] p-6">
             <p className="font-semibold text-[#203b35]">Lamu Tours &amp; Booking Agency</p>
-            <p className="mt-3 text-sm leading-6 text-[#59675f]">Lamu Island, Kenya<br /><a className="font-medium text-[#9a5534] hover:underline" href="mailto:info@lamutours.com">info@lamutours.com</a></p>
+            <p className="mt-3 text-sm leading-6 text-[#52615b]">
+              Lamu Island, Kenya<br />
+              <a className="font-medium text-[#9a5534] hover:underline" href="mailto:info@lamutours.com">info@lamutours.com</a><br />
+              <a className="font-medium text-[#9a5534] hover:underline" href="mailto:cdominic.cm@gmail.com">cdominic.cm@gmail.com</a><br />
+              <a className="font-medium text-[#9a5534] hover:underline" href="mailto:justerkarendi.carlos@gmail.com">justerkarendi.carlos@gmail.com</a><br />
+              <a className="font-medium text-[#9a5534] hover:underline" href="tel:0704143718">0704143718</a>
+            </p>
           </div>
         </div>
         <form className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-9" onSubmit={submitContact}>
@@ -906,7 +1033,7 @@ function TourDetailPage({ catalogue, loading, error, retry, currency }) {
     return <PageShell><section className="mx-auto max-w-7xl px-5 py-16 sm:px-8"><LoadingState error={error} onRetry={retry} /></section></PageShell>;
   }
   if (!tour) {
-    return <PageShell><section className="mx-auto max-w-3xl px-5 py-20 text-center"><h1 className="display-font text-4xl text-[#203b35]">Tour not found</h1><p className="mt-4 text-[#66736d]">We couldn’t find that tour. Browse the current experiences to choose another.</p><ButtonLink className="mt-7" href="/tours.html">Browse tours</ButtonLink></section></PageShell>;
+    return <PageShell><section className="mx-auto max-w-3xl px-5 py-20 text-center"><h1 className="display-font text-4xl text-[#203b35]">Tour not found</h1><p className="mt-4 text-[#52615b]">We couldn’t find that tour. Browse the current experiences to choose another.</p><ButtonLink className="mt-7" href="/tours.html">Browse tours</ButtonLink></section></PageShell>;
   }
 
   return (
@@ -918,20 +1045,20 @@ function TourDetailPage({ catalogue, loading, error, retry, currency }) {
           <div className="py-2">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">{tour.category || 'A Lamu experience'}</p>
             <h1 className="display-font mt-4 text-4xl leading-tight text-[#203b35] sm:text-5xl">{tour.name}</h1>
-            <p className="mt-5 leading-7 text-[#66736d]">{tour.description}</p>
+            <p className="mt-5 leading-7 text-[#52615b]">{tour.description}</p>
             <div className="mt-7 grid grid-cols-2 gap-4 rounded-2xl bg-[#efeee7] p-5">
-              <div><span className="block text-xs text-[#66736d]">Duration</span><strong className="mt-1 block text-[#203b35]">{tour.duration}</strong></div>
-              <div><span className="block text-xs text-[#66736d]">From</span><strong className="mt-1 block text-[#203b35]">{formatPrice(tour.price, currency)} / person</strong></div>
-              <div><span className="block text-xs text-[#66736d]">Pickup point</span><strong className="mt-1 block text-[#203b35]">{tour.pickup_point || 'Confirmed after booking'}</strong></div>
-              <div><span className="block text-xs text-[#66736d]">Group size</span><strong className="mt-1 block text-[#203b35]">{tour.min_group_size || 1}–{tour.max_group_size || 12} guests</strong></div>
+              <div><span className="block text-xs text-[#52615b]">Duration</span><strong className="mt-1 block text-[#203b35]">{tour.duration}</strong></div>
+              <div><span className="block text-xs text-[#52615b]">From</span><strong className="mt-1 block text-[#203b35]">{formatPrice(tour.price, currency)} / person</strong></div>
+              <div><span className="block text-xs text-[#52615b]">Pickup point</span><strong className="mt-1 block text-[#203b35]">{tour.pickup_point || 'Confirmed after booking'}</strong></div>
+              <div><span className="block text-xs text-[#52615b]">Group size</span><strong className="mt-1 block text-[#203b35]">{tour.min_group_size || 1}–{tour.max_group_size || 12} guests</strong></div>
             </div>
             <ButtonLink className="mt-7" href={`/booking.html?tour=${encodeURIComponent(tour.slug)}`}>Book this tour</ButtonLink>
           </div>
         </div>
         {(tour.itinerary?.length || tour.inclusions?.length || tour.exclusions?.length) > 0 && <div className="mt-12 grid gap-6 md:grid-cols-3">
           {tour.itinerary?.length > 0 && <TourDetailList title="Itinerary" items={tour.itinerary} />}
-          {tour.inclusions?.length > 0 && <TourDetailList title="Included" items={tour.inclusions} />}
-          {tour.exclusions?.length > 0 && <TourDetailList title="Not included" items={tour.exclusions} />}
+          {tour.inclusions?.length > 0 && <TourDetailList title="What's included" items={tour.inclusions} />}
+          {tour.exclusions?.length > 0 && <TourDetailList title="What's not included" items={tour.exclusions} />}
         </div>}
         <section className="mt-14 border-t border-[#e9e5db] pt-10">
           <SectionHeading eyebrow="Share your experience" title="A note from a fellow traveler." description="Been on this tour? Leave a review to help other travelers choose." />
@@ -943,7 +1070,33 @@ function TourDetailPage({ catalogue, loading, error, retry, currency }) {
 }
 
 function TourDetailList({ title, items }) {
-  return <section className="rounded-2xl bg-[#f5f3ed] p-5"><h2 className="display-font text-2xl text-[#203b35]">{title}</h2><ul className="mt-4 list-inside list-disc space-y-2 text-sm leading-6 text-[#52615b]">{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></section>;
+  const isItinerary = title === 'Itinerary';
+  const hasTimeSlots = isItinerary && items.some((item) => item.includes('|'));
+
+  return (
+    <section className="rounded-2xl border border-[#d1e0e2] bg-[#f5f3ed] p-5">
+      <h2 className="display-font text-2xl text-[#203b35]">{title}</h2>
+      {hasTimeSlots ? (
+        <ol className="mt-5 space-y-4">
+          {items.map((item, index) => {
+            const [time, detail = item] = item.split('|', 2);
+            const [activity, highlightText] = detail.split('; Highlights:', 2);
+            return (
+              <li className="relative border-l-2 border-[#b6d8dc] pb-1 pl-4 last:border-l-transparent" key={`${item}-${index}`}>
+                <p className="text-xs font-extrabold uppercase tracking-wide text-[#17617a]">{time.trim()}</p>
+                <p className="mt-1 text-sm font-semibold leading-6 text-[#203b35]">{activity.trim()}</p>
+                {highlightText && <p className="mt-1 text-sm leading-6 text-[#52615b]"><span className="font-semibold">Highlights:</span> {highlightText.trim()}</p>}
+              </li>
+            );
+          })}
+        </ol>
+      ) : (
+        <ul className="mt-4 list-inside list-disc space-y-2 text-sm leading-6 text-[#52615b]">
+          {items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function AuthPage({ register = false }) {
@@ -954,7 +1107,7 @@ function AuthPage({ register = false }) {
         <div className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-10">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">Lamu Tours</p>
           <h1 className="display-font mt-3 text-4xl text-[#203b35]">{register ? 'Join the island experience.' : 'Welcome back to Lamu.'}</h1>
-          <p className="mt-3 text-[#66736d]">{register ? 'Create an account to plan and manage your bookings.' : 'Sign in to continue planning your Lamu experience.'}</p>
+          <p className="mt-3 text-[#52615b]">{register ? 'Create an account to plan and manage your bookings.' : 'Sign in to continue planning your Lamu experience.'}</p>
           {error && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
           <form className="mt-7 space-y-5" action={register ? '/register' : '/login'} method="post">
             {register && <label className="block"><span className="field-label">Full name</span><input className="field" name="name" autoComplete="name" required /></label>}
@@ -963,12 +1116,12 @@ function AuthPage({ register = false }) {
             {register && <label className="block"><span className="field-label">Confirm password</span><input className="field" name="confirm_password" type="password" minLength="8" autoComplete="new-password" required /></label>}
             <button className="min-h-12 w-full rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38]" type="submit">{register ? 'Create account' : 'Sign in'}</button>
           </form>
-          <p className="mt-6 text-sm text-[#66736d]">
+          <p className="mt-6 text-sm text-[#52615b]">
             {register ? 'Already have an account?' : 'New to Lamu Tours?'}{' '}
             <a className="font-semibold text-[#9a5534] hover:underline" href={register ? '/login.html' : '/register.html'}>{register ? 'Sign in' : 'Create an account'}</a>
           </p>
           {!register && <p className="mt-4 text-sm"><a className="font-semibold text-[#9a5534] underline" href="/my-bookings">View or manage your bookings</a></p>}
-          <p className="mt-4 text-sm text-[#66736d]">For vendors: <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/login">Sign in</a> or <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/register">create an account</a>.</p>
+          <p className="mt-4 text-sm text-[#52615b]">For vendors: <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/login">Sign in</a> or <a className="font-semibold text-[#9a5534] hover:underline" href="/vendor/register">create an account</a>.</p>
         </div>
       </section>
     </PageShell>
@@ -1026,7 +1179,7 @@ function ConfirmationPage() {
         <div className="rounded-3xl border border-[#e9e5db] bg-white p-8 text-center shadow-sm sm:p-12">
           <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#e9eee8] text-2xl text-[#31554b]" aria-hidden="true">✓</span>
           <h1 className="display-font mt-6 text-4xl text-[#203b35]">{paymentIsConfirmed ? 'Your booking is confirmed.' : 'Your request is in.'}</h1>
-          <p className="mt-4 leading-7 text-[#66736d]">
+          <p className="mt-4 leading-7 text-[#52615b]">
             {paymentIsConfirmed
               ? 'Your M-Pesa payment has been verified. Thanks for booking with Lamu Tours.'
               : paymentFailed
@@ -1034,17 +1187,17 @@ function ConfirmationPage() {
                 : 'We’ve received your request. Check your phone for the M-Pesa prompt and enter your PIN to pay. We’ll confirm your booking after Daraja verifies the payment.'}
           </p>
           {bookingId && <p className="mt-5 rounded-xl bg-[#f5f3ed] p-4 text-sm font-semibold text-[#203b35]">Booking reference: #{bookingId}</p>}
-          {paymentReference && <p className="mt-3 text-sm text-[#66736d]" role="status">{paymentIsConfirmed ? 'Payment status: paid' : paymentFailed ? 'Payment status: not completed' : initiationUnknown ? 'We could not confirm whether the M-Pesa prompt was sent. Check your phone and payment status before trying again.' : 'Waiting for M-Pesa payment confirmation…'}</p>}
+          {paymentReference && <p className="mt-3 text-sm text-[#52615b]" role="status">{paymentIsConfirmed ? 'Payment status: paid' : paymentFailed ? 'Payment status: not completed' : initiationUnknown ? 'We could not confirm whether the M-Pesa prompt was sent. Check your phone and payment status before trying again.' : 'Waiting for M-Pesa payment confirmation…'}</p>}
           {payment?.mpesa_receipt_number && <p className="mt-2 text-sm font-semibold text-[#31554b]">M-Pesa receipt: {payment.mpesa_receipt_number}</p>}
           {payment?.document_urls?.invoice && <a className="mt-4 inline-block rounded-full border border-[#31554b] px-4 py-2 text-sm font-semibold text-[#31554b] hover:bg-[#e9eee8]" href={payment.document_urls.invoice}>Download invoice</a>}
           {payment?.document_urls?.receipt && <a className="mt-4 ml-2 inline-block rounded-full border border-[#31554b] px-4 py-2 text-sm font-semibold text-[#31554b] hover:bg-[#e9eee8]" href={payment.document_urls.receipt}>Download receipt</a>}
           {paymentError && <p className="mt-3 text-sm text-[#8a4c2e]" role="status">{paymentError}</p>}
           {emailStatus === 'sent' && <p className="mt-4 text-sm text-[#31554b]" role="status">A confirmation email has been sent to the address you provided.</p>}
           {emailStatus === 'unavailable' && <p className="mt-4 text-sm text-[#8a4c2e]" role="status">Your booking is saved. Email delivery is not configured right now; keep your booking reference for enquiries.</p>}
-          {isManaged && <p className="mt-4 text-sm text-[#66736d]"><a className="font-semibold text-[#9a5534] underline" href="/my-bookings">View or manage this booking</a></p>}
+          {isManaged && <p className="mt-4 text-sm text-[#52615b]"><a className="font-semibold text-[#9a5534] underline" href="/my-bookings">View or manage this booking</a></p>}
           <div className="mt-8 rounded-2xl bg-[#f5f3ed] p-5 text-left">
           <h2 className="font-semibold text-[#203b35]">And now?</h2>
-            <ul className="mt-3 list-inside list-disc space-y-2 text-sm leading-6 text-[#66736d]">
+            <ul className="mt-3 list-inside list-disc space-y-2 text-sm leading-6 text-[#52615b]">
               <li>Approve the M-Pesa prompt on your phone, if you have not already.</li>
               <li>Daraja will securely notify us when payment completes.</li>
               <li>Your booking status will update here automatically.</li>
@@ -1108,17 +1261,17 @@ function CustomerBookingCard({ booking, csrfToken, onChanged }) {
   return (
     <article className="rounded-2xl border border-[#e9e5db] bg-white p-5 shadow-sm sm:p-7">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h2 className="display-font text-2xl text-[#203b35]">{booking.tour.replaceAll('-', ' ')}</h2><p className="mt-1 text-sm text-[#66736d]">{booking.date} at {booking.time} · {booking.guests} guest{booking.guests === 1 ? '' : 's'}</p></div>
+        <div><h2 className="display-font text-2xl text-[#203b35]">{booking.tour.replaceAll('-', ' ')}</h2><p className="mt-1 text-sm text-[#52615b]">{booking.date} at {booking.time} · {booking.guests} guest{booking.guests === 1 ? '' : 's'}</p></div>
         <span className="rounded-full bg-[#efeee7] px-3 py-1 text-sm font-semibold capitalize text-[#52615b]">{booking.status}</span>
       </div>
-      <p className="mt-3 text-sm text-[#66736d]">Booking #{booking.id} · KSh {Number(booking.amount).toLocaleString(document.documentElement.lang === 'sw' ? 'sw-KE' : 'en-KE')} · Payment: {booking.payment_status}</p>
+      <p className="mt-3 text-sm text-[#52615b]">Booking #{booking.id} · KSh {Number(booking.amount).toLocaleString(document.documentElement.lang === 'sw' ? 'sw-KE' : 'en-KE')} · Payment: {booking.payment_status}</p>
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-800" role="alert">{error}</p>}
       {canChange && booking.schedule_id && <div className="mt-5 flex flex-wrap items-end gap-3">
         <label className="min-w-64 flex-1"><span className="field-label">Reschedule departure</span><select className="field" value={scheduleId} onChange={(event) => setScheduleId(event.target.value)}><option value="">Choose another available time</option>{schedules.map((slot) => <option key={slot.id} value={slot.id}>{slot.starts_at.replace('T', ' ')} · {slot.remaining} spaces</option>)}</select></label>
         <button className="rounded-full border border-[#203b35] px-5 py-3 text-sm font-semibold text-[#203b35] disabled:opacity-50" type="button" disabled={busy || !scheduleId} onClick={() => mutate('reschedule', { schedule_id: Number(scheduleId) })}>Reschedule</button>
         <button className="rounded-full border border-red-200 px-5 py-3 text-sm font-semibold text-red-700 disabled:opacity-50" type="button" disabled={busy} onClick={() => { if (window.confirm('Cancel this booking? Changes are allowed only more than 48 hours before departure.')) mutate('cancel'); }}>Cancel booking</button>
       </div>}
-      {canChange && <p className="mt-3 text-xs text-[#7a857f]">Cancellation and rescheduling are available at least 48 hours before departure.</p>}
+      {canChange && <p className="mt-3 text-xs text-[#52615b]">Cancellation and rescheduling are available at least 48 hours before departure.</p>}
     </article>
   );
 }
@@ -1148,22 +1301,45 @@ function MyBookingsPage() {
     }
   }
 
+  async function logout() {
+    if (!profile?.csrf_token) return;
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch('/logout', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'X-CSRF-Token': profile.csrf_token },
+      });
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.error || 'You could not be signed out. Please try again.');
+      }
+      window.location.assign('/index.html');
+    } catch (logoutError) {
+      setError(getErrorMessage(logoutError));
+      setLoading(false);
+    }
+  }
+
   useEffect(() => { load(); }, []);
 
   return (
     <PageShell>
       <PageBanner eyebrow="Your account" title="My account and bookings." description="View your account details and manage your Lamu experiences." />
       <section className="mx-auto max-w-5xl space-y-5 px-5 py-12 sm:px-8 sm:py-16">
-        {loading && <p className="text-[#66736d]" role="status">Loading your bookings…</p>}
+        {loading && <p className="text-[#52615b]" role="status">Loading your bookings…</p>}
         {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800"><p role="alert">{error}</p><a className="mt-3 inline-block font-semibold underline" href="/login.html">Sign in as a customer</a></div>}
         {profile && <section className="rounded-2xl border border-[#e9e5db] bg-white p-6 shadow-sm" aria-labelledby="account-details-heading">
-          <h2 id="account-details-heading" className="display-font text-2xl text-[#203b35]">Account details</h2>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <h2 id="account-details-heading" className="display-font text-2xl text-[#203b35]">Account details</h2>
+            <button className="rounded-full border border-[#dedbd2] px-4 py-2 text-sm font-semibold text-[#52615b] hover:bg-[#eeeee6] disabled:opacity-50" type="button" onClick={logout} disabled={loading}>Log out</button>
+          </div>
           <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
-            <div><dt className="font-semibold text-[#66736d]">Name</dt><dd className="mt-1 text-[#203b35]">{profile.customer.name}</dd></div>
-            <div><dt className="font-semibold text-[#66736d]">Email</dt><dd className="mt-1 text-[#203b35]">{profile.customer.email}</dd></div>
+            <div><dt className="font-semibold text-[#52615b]">Name</dt><dd className="mt-1 text-[#203b35]">{profile.customer.name}</dd></div>
+            <div><dt className="font-semibold text-[#52615b]">Email</dt><dd className="mt-1 text-[#203b35]">{profile.customer.email}</dd></div>
           </dl>
         </section>}
-        {!loading && !error && bookings.length === 0 && <div className="rounded-2xl bg-white p-7"><h2 className="display-font text-2xl text-[#203b35]">No bookings yet</h2><p className="mt-2 text-[#66736d]">When you book while signed in, your trips will appear here.</p><ButtonLink className="mt-5" href="/tours.html">Explore tours</ButtonLink></div>}
+        {!loading && !error && bookings.length === 0 && <div className="rounded-2xl bg-white p-7"><h2 className="display-font text-2xl text-[#203b35]">No bookings yet</h2><p className="mt-2 text-[#52615b]">When you book while signed in, your trips will appear here.</p><ButtonLink className="mt-5" href="/tours.html">Explore tours</ButtonLink></div>}
         {profile && bookings.map((booking) => <CustomerBookingCard key={booking.id} booking={booking} csrfToken={profile.csrf_token} onChanged={load} />)}
       </section>
     </PageShell>
@@ -1176,7 +1352,7 @@ function NotFoundPage() {
       <section className="mx-auto max-w-3xl px-5 py-20 text-center sm:px-8 sm:py-28">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">404 · Page not found</p>
         <h1 className="display-font mt-4 text-4xl text-[#203b35]">This isn’t the island path you’re looking for.</h1>
-        <p className="mt-4 text-[#66736d]">The page may have moved. Head home or browse the island tours instead.</p>
+        <p className="mt-4 text-[#52615b]">The page may have moved. Head home or browse the island tours instead.</p>
         <div className="mt-7 flex justify-center gap-3">
           <ButtonLink href="/index.html">Go home</ButtonLink>
           <ButtonLink href="/tours.html" secondary className="border-[#203b35] bg-white text-[#203b35] hover:bg-[#203b35] hover:text-white">Browse tours</ButtonLink>
@@ -1249,7 +1425,7 @@ export default function App() {
       targets.forEach((element, index) => {
         if (element.classList.contains('scroll-reveal')) return;
         element.classList.add('scroll-reveal');
-        element.style.setProperty('--reveal-delay', `${Math.min(index, 4) * 70}ms`);
+        element.style.setProperty('--reveal-delay', `${Math.min(index, 4) * 100}ms`);
         observer?.observe(element);
       });
     }
@@ -1276,8 +1452,10 @@ export default function App() {
     observeTargets(root);
     updateMotionVisibility();
     document.addEventListener('visibilitychange', updateMotionVisibility);
-    window.addEventListener('scroll', revealVisibleTargets, { passive: true });
-    window.addEventListener('resize', revealVisibleTargets);
+    if (!observer) {
+      window.addEventListener('scroll', revealVisibleTargets, { passive: true });
+      window.addEventListener('resize', revealVisibleTargets);
+    }
 
     const mutations = new MutationObserver((records) => {
       records.forEach((record) => record.addedNodes.forEach((node) => {
@@ -1292,8 +1470,10 @@ export default function App() {
       mutations.disconnect();
       observer?.disconnect();
       document.removeEventListener('visibilitychange', updateMotionVisibility);
-      window.removeEventListener('scroll', revealVisibleTargets);
-      window.removeEventListener('resize', revealVisibleTargets);
+      if (!observer) {
+        window.removeEventListener('scroll', revealVisibleTargets);
+        window.removeEventListener('resize', revealVisibleTargets);
+      }
       document.documentElement.classList.remove('motion-ready');
     };
   }, []);
@@ -1321,6 +1501,8 @@ export default function App() {
           throw new Error('The catalogue returned incomplete data.');
         }
         setCatalogue(data);
+        document.documentElement.dataset.whatsappPhone = data.whatsapp_business_phone || '';
+        document.dispatchEvent(new Event('lamu-catalogue-ready'));
       })
       .catch((loadError) => {
         if (loadError.name !== 'AbortError') setError(getErrorMessage(loadError));
@@ -1383,7 +1565,7 @@ export default function App() {
   if (pathname === '/vendor/register') return <VendorRegistrationPage />;
   if (pathname === '/vendor/dashboard') return <VendorDashboardPage />;
   if (pathname === '/tours.html') return <ToursPage catalogue={catalogue} currency={currency} error={error} loading={loading} retry={retry} />;
-  if (pathname === '/booking.html') return <BookingPage catalogue={catalogue} error={error} loading={loading} retry={retry} />;
+  if (pathname === '/booking.html') return <BookingPage catalogue={catalogue} currency={currency} error={error} loading={loading} retry={retry} />;
   if (pathname === '/my-bookings') return <MyBookingsPage />;
   if (pathname === '/about-lamu.html') return <AboutPage />;
   if (pathname === '/contact.html') return <ContactPage />;

@@ -1,4 +1,5 @@
 import io
+from uuid import uuid4
 
 import pytest
 
@@ -202,3 +203,15 @@ def test_catalog_image_upload_stays_disabled_on_vercel(monkeypatch, tmp_path):
         response, status_code = application.save_catalog_image('vendors/1')
 
     assert status_code == 503
+
+
+@pytest.mark.parametrize('url', [
+    '/images/../app.py',
+    '/pictures/../app.py',
+    '/uploads/../app.py',
+])
+def test_asset_routes_do_not_expose_source_files(application_client, url):
+    response = application_client.get(url)
+
+    assert response.status_code in {403, 404}
+    assert b'import ' not in response.data

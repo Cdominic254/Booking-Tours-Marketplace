@@ -172,12 +172,14 @@ function createDhow(scene) {
     );
   }
 
+  boat.scale.setScalar(0.78);
+  boat.position.y = -0.1;
   boat.rotation.y = -0.16;
   scene.add(boat);
 
   const rippleMaterial = new THREE.MeshBasicMaterial({ color: '#b8eff4', transparent: true, opacity: 0.3 });
-  const ripples = [1.35, 1.7, 2.05].map((radius, index) => {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.008, 6, 96), rippleMaterial.clone());
+  const ripples = [1.1, 1.4, 1.7].map((radius, index) => {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.006, 6, 72), rippleMaterial.clone());
     ring.rotation.x = Math.PI / 2;
     ring.position.set(0, -0.34 - index * 0.008, 0);
     scene.add(ring);
@@ -208,13 +210,15 @@ export default function DhowModel() {
     let resizeObserver;
     let intersectionObserver;
     let frameTime = 0;
+    let stageVisible = false;
     let pointerDown = false;
     let previousPointer = { x: 0, y: 0 };
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let reducedMotion = motionPreference.matches;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
-    camera.position.set(3.9, 2.8, 5.2);
-    camera.lookAt(0, 0.72, 0);
+    camera.position.set(4.3, 3, 5.8);
+    camera.lookAt(0, 0.62, 0);
     scene.add(new THREE.HemisphereLight('#e9fbff', '#31536a', 2.4));
 
     const sun = new THREE.DirectionalLight('#fff1d4', 3.2);
@@ -241,12 +245,14 @@ export default function DhowModel() {
 
     const renderFrame = (time) => {
       if (document.visibilityState !== 'visible') return;
+      if (time - frameTime < 1000 / 30) return;
+      frameTime = time;
       const seconds = time / 1000;
       if (!reducedMotion) {
-        model.boat.position.y = Math.sin(seconds * 1.15) * 0.045;
-        model.boat.rotation.z = Math.sin(seconds * 0.7) * 0.012;
+        model.boat.position.y = -0.1 + Math.sin(seconds * 0.8) * 0.035;
+        model.boat.rotation.z = Math.sin(seconds * 0.5) * 0.012;
         model.ripples.forEach((ripple, index) => {
-          ripple.scale.setScalar(1 + Math.sin(seconds * 1.1 + index) * 0.025);
+          ripple.scale.setScalar(1 + Math.sin(seconds * 0.75 + index) * 0.025);
         });
       }
       renderer.render(scene, camera);
@@ -263,11 +269,24 @@ export default function DhowModel() {
     resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(stage);
     intersectionObserver = new IntersectionObserver(([entry]) => {
+      stageVisible = entry.isIntersecting;
       if (entry.isIntersecting && !reducedMotion) renderer.setAnimationLoop(renderFrame);
       else renderer.setAnimationLoop(null);
       if (entry.isIntersecting && reducedMotion) renderer.render(scene, camera);
     });
     intersectionObserver.observe(stage);
+
+    const updateMotionPreference = (event) => {
+      reducedMotion = event.matches;
+      if (!stageVisible || reducedMotion) {
+        renderer.setAnimationLoop(null);
+        if (stageVisible) renderer.render(scene, camera);
+      } else {
+        frameTime = 0;
+        renderer.setAnimationLoop(renderFrame);
+      }
+    };
+    motionPreference.addEventListener('change', updateMotionPreference);
 
     const canvas = renderer.domElement;
     const pointerStart = (event) => {
@@ -293,11 +312,11 @@ export default function DhowModel() {
     canvas.addEventListener('pointermove', pointerMove);
     canvas.addEventListener('pointerup', pointerEnd);
     canvas.addEventListener('pointercancel', pointerEnd);
-    renderer.setAnimationLoop(reducedMotion ? null : renderFrame);
     renderer.render(scene, camera);
 
     return () => {
       renderer.setAnimationLoop(null);
+      motionPreference.removeEventListener('change', updateMotionPreference);
       resizeObserver.disconnect();
       intersectionObserver.disconnect();
       canvas.removeEventListener('pointerdown', pointerStart);
@@ -324,7 +343,7 @@ export default function DhowModel() {
       role="img"
       aria-label="Interactive 3D model of a traditional Lamu dhow. Drag to turn the boat."
     >
-      {(!desktopScene || unavailable) && <img src="/pictures/22151750.jpg" alt="Traditional dhow sailing along the Lamu coast" />}
+      {(!desktopScene || unavailable) && <img src="/images/IMG_2026-03-23-17-36-36-712.jpg" alt="Traditional dhow boats on the water in Lamu" />}
       {desktopScene && !unavailable && <span className="dhow-model-hint" aria-hidden="true">Drag to explore the dhow</span>}
     </div>
   );

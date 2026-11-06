@@ -291,8 +291,8 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
         <div>
           <p className="text-xs font-bold uppercase text-[#a75f3a]">{tour.category || 'Island experience'}</p>
           <h3 className="display-font mt-1 text-xl text-[#203b35]">{tour.name}</h3>
-          <p className="mt-1 text-sm text-[#66736d]">{formatPrice(tour.price, language)} per guest · {tour.duration} · {tour.pickup_point}</p>
-          <p className="mt-2 line-clamp-2 text-sm text-[#66736d]">{tour.description}</p>
+          <p className="mt-1 text-sm text-[#52615b]">{formatPrice(tour.price, language)} per guest · {tour.duration} · {tour.pickup_point}</p>
+          <p className="mt-2 line-clamp-2 text-sm text-[#52615b]">{tour.description}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <label className="sr-only" htmlFor={`departure-${recommendation ? 'recommended-' : ''}${tour.slug}`}>Select a departure</label>
@@ -330,7 +330,7 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#a75f3a]">Smart trip planner</p>
           <h2 id="smart-plan-heading" className="display-font mt-2 text-3xl text-[#203b35]">Build a Lamu plan that fits.</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-[#66736d]">Search real tour departures by date and group size, then shape a day-by-day itinerary.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-[#52615b]">Search real tour departures by date and group size, then shape a day-by-day itinerary.</p>
 
           <form className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" onSubmit={saveSearch}>
             <label><span className="field-label">From</span><input className="field" name="startDate" type="date" min={today} value={filters.startDate} onChange={updateFilter} required /></label>
@@ -344,21 +344,21 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
             <label><span className="field-label">Max distance from site (km)</span><input className="field" name="maxDistance" type="number" min="0" max="100" step="0.5" value={filters.maxDistance} onChange={updateFilter} /></label>
             <button className="min-h-12 rounded-full bg-[#b96e45] px-5 font-semibold text-white hover:bg-[#a45d38] sm:col-span-2 xl:col-span-4" type="submit">Find matching experiences</button>
           </form>
-          <p className="mt-3 text-xs text-[#7a857f]">Distance uses coordinates saved for a stay and its beach or heritage landmark. Listings without coordinates are excluded from measured-distance results.</p>
+          <p className="mt-3 text-xs text-[#52615b]">Distance uses coordinates saved for a stay and its beach or heritage landmark. Listings without coordinates are excluded from measured-distance results.</p>
 
           {availabilityError && <p className="mt-5 rounded-lg bg-amber-50 p-3 text-sm text-amber-900" role="status">{availabilityError}</p>}
           <div className="mt-8">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <h3 className="display-font text-2xl text-[#203b35]">Available experiences</h3>
-              {availabilityLoading && <span className="text-sm text-[#66736d]" role="status">Checking live departures…</span>}
+              {availabilityLoading && <span className="text-sm text-[#52615b]" role="status">Checking live departures…</span>}
             </div>
             {!availabilityLoading && !availabilityError && eligibleTours.length === 0 && (
               <div className="mt-4 rounded-lg bg-[#f5f3ed] p-4">
-                <p className="text-sm text-[#66736d]">No departures match those dates and group size.</p>
+                <p className="text-sm text-[#52615b]">No departures match those dates and group size.</p>
                 <a className="mt-3 inline-flex rounded-full border border-[#203b35] px-4 py-2 text-sm font-semibold text-[#203b35] hover:bg-[#203b35] hover:text-white" href={dateEnquiryUrl()} target="_blank" rel="noreferrer">Ask about dates on WhatsApp</a>
               </div>
             )}
-            {!availabilityLoading && matchingTours.length === 0 && eligibleTours.length > 0 && <p className="mt-4 text-sm text-[#66736d]">No departures match these filters. Change your area, activity, budget, or feature.</p>}
+            {!availabilityLoading && matchingTours.length === 0 && eligibleTours.length > 0 && <p className="mt-4 text-sm text-[#52615b]">No departures match these filters. Change your area, activity, budget, or feature.</p>}
             {matchingTours.map((tour) => renderTour(tour))}
           </div>
 
@@ -372,11 +372,11 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
           {matchingProperties.length > 0 && (
             <div className="mt-10 border-t border-[#e9e5db] pt-8">
               <h3 className="display-font text-2xl text-[#203b35]">Stay ideas</h3>
-              <p className="mt-1 text-sm text-[#66736d]">Guest capacity and rates match; the host confirms stay dates.</p>
+              <p className="mt-1 text-sm text-[#52615b]">Guest capacity and rates match; the host confirms stay dates.</p>
               <div className="mt-2">
                 {matchingProperties.map((property) => (
                   <article className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e9e5db] py-4" key={property.slug}>
-                    <div><h4 className="font-semibold text-[#203b35]">{property.name}</h4><p className="text-sm text-[#66736d]">{property.location} · {language === 'sw' ? `hadi ${property.guests} wageni · ${formatPrice(property.price_per_night, language)} / usiku` : `up to ${property.guests} guests · ${formatPrice(property.price_per_night, language)} / night`}</p></div>
+                    <div><h4 className="font-semibold text-[#203b35]">{property.name}</h4><p className="text-sm text-[#52615b]">{property.location} · {language === 'sw' ? `hadi ${property.guests} wageni · ${formatPrice(property.price_per_night, language)} / usiku` : `up to ${property.guests} guests · ${formatPrice(property.price_per_night, language)} / night`}</p></div>
                     <a className="rounded-full border border-[#203b35] px-4 py-2 text-sm font-semibold text-[#203b35] hover:bg-[#203b35] hover:text-white" href={`/booking.html?stay=${encodeURIComponent(property.slug)}&guests=${encodeURIComponent(filters.guests)}&check_in=${filters.startDate}&check_out=${filters.endDate > filters.startDate ? filters.endDate : addDays(filters.startDate, 1)}#booking-checkout`}>Ask about this stay</a>
                   </article>
                 ))}
@@ -388,10 +388,10 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
         <aside className="h-fit border-l border-[#e9e5db] pl-0 lg:sticky lg:top-6 lg:pl-7">
           <div className="flex items-baseline justify-between gap-3">
             <h3 className="display-font text-2xl text-[#203b35]">Your itinerary</h3>
-            <span className="text-sm text-[#66736d]">{dates.length} {dates.length === 1 ? 'day' : 'days'}</span>
+            <span className="text-sm text-[#52615b]">{dates.length} {dates.length === 1 ? 'day' : 'days'}</span>
           </div>
           {planMessage && <p className="mt-3 text-sm text-[#52615b]" role="status">{planMessage}</p>}
-          {itinerary.length === 0 ? <p className="mt-4 text-sm leading-6 text-[#66736d]">Add available activities to see your plan and quote.</p> : (
+          {itinerary.length === 0 ? <p className="mt-4 text-sm leading-6 text-[#52615b]">Add available activities to see your plan and quote.</p> : (
             <>
               <div className="mt-4 divide-y divide-[#e9e5db]">
                 {itinerary.map((item, index) => {
@@ -401,18 +401,18 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
                     <article className="py-4" key={item.schedule.id}>
                       <p className="text-xs font-bold uppercase text-[#a75f3a]">{language === 'sw' ? 'Siku' : 'Day'} {dates.indexOf(date) + 1} · {formatDate(date, language)} · {item.schedule.starts_at.slice(11, 16)}</p>
                       <h4 className="mt-1 font-semibold text-[#203b35]">{item.tour.name}</h4>
-                      <p className="mt-1 text-sm text-[#66736d]">{item.guests} {language === 'sw' ? item.guests === 1 ? 'mgeni' : 'wageni' : item.guests === 1 ? 'guest' : 'guests'} · {formatPrice(item.tour.price * item.guests, language)}</p>
+                      <p className="mt-1 text-sm text-[#52615b]">{item.guests} {language === 'sw' ? item.guests === 1 ? 'mgeni' : 'wageni' : item.guests === 1 ? 'guest' : 'guests'} · {formatPrice(item.tour.price * item.guests, language)}</p>
                       <div className="mt-2 flex items-center gap-4 text-sm">
                         <a className="font-semibold text-[#9a5534] underline" href={bookingHref}>Book this activity</a>
-                        <button className="text-[#66736d] underline" type="button" onClick={() => setItinerary((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+                        <button className="text-[#52615b] underline" type="button" onClick={() => setItinerary((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
                       </div>
                     </article>
                   );
                 })}
               </div>
               <div className="border-t border-[#e9e5db] pt-4">
-                <p className="flex justify-between gap-3 text-sm text-[#66736d]"><span>Estimated activities total</span><strong className="text-[#203b35]">{formatPrice(itineraryTotal, language)}</strong></p>
-                <p className="mt-1 text-xs text-[#7a857f]">Stay, transport, and final availability are not included.</p>
+                <p className="flex justify-between gap-3 text-sm text-[#52615b]"><span>Estimated activities total</span><strong className="text-[#203b35]">{formatPrice(itineraryTotal, language)}</strong></p>
+                <p className="mt-1 text-xs text-[#52615b]">Stay, transport, and final availability are not included.</p>
                 <a className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={quoteUrl()} target="_blank" rel="noreferrer">{whatsappPhone ? 'Message Lamu Tours on WhatsApp' : 'Share quote on WhatsApp'}</a>
               </div>
             </>

@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
 :root {
-  font-family: "DM Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #18344b;
-  background: #f2f8fc;
+  font-family: "Manrope", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #123b52;
+  background: #f1f7f8;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -44,12 +44,12 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid #f06f52;
+  outline: 3px solid #c8784d;
   outline-offset: 3px;
 }
 
 .display-font {
-  font-family: "Playfair Display", Georgia, "Times New Roman", serif;
+  font-family: "Fraunces", Georgia, "Times New Roman", serif;
   font-weight: 600;
   letter-spacing: -0.035em;
   text-wrap: balance;
@@ -71,9 +71,9 @@ h3 {
   flex: none;
   border: 3px solid white;
   border-radius: 1.15rem;
-  background: #14213d;
+  background: #123b52;
   box-shadow: 0 5px 14px rgb(8 56 93 / 22%), 0 0 0 1px rgb(8 56 93 / 10%);
-  transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 240ms ease;
+  transition: transform 360ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 360ms ease;
 }
 
 .brand-lockup:hover .brand-mark {
@@ -82,7 +82,7 @@ h3 {
 }
 
 .brand-name {
-  font-family: "Playfair Display", Georgia, "Times New Roman", serif;
+  font-family: "Fraunces", Georgia, "Times New Roman", serif;
   letter-spacing: -0.04em;
   line-height: 1.05;
 }
@@ -94,8 +94,8 @@ h3 {
 
 .image-overlay {
   background:
-    linear-gradient(90deg, rgb(4 35 70 / 82%) 0%, rgb(4 68 112 / 52%) 52%, rgb(4 126 153 / 10%) 100%),
-    linear-gradient(0deg, rgb(3 37 69 / 28%), transparent 55%);
+    linear-gradient(90deg, rgb(8 43 61 / 84%) 0%, rgb(13 77 102 / 54%) 52%, rgb(15 137 153 / 10%) 100%),
+    linear-gradient(0deg, rgb(8 43 61 / 30%), transparent 55%);
 }
 
 .dhow-stage {
@@ -146,6 +146,7 @@ h3 {
   background: white;
   padding: 0.78rem 0.9rem;
   color: #18344b;
+  font-size: 1rem;
 }
 
 .field:focus {
@@ -162,7 +163,7 @@ h3 {
 }
 
 .field::placeholder {
-  color: #7d94a5;
+  color: #536879;
 }
 
 .coast-hero::after {
@@ -176,32 +177,32 @@ h3 {
   box-shadow: 0 0 0 36px rgb(255 255 255 / 5%), 0 0 0 72px rgb(255 255 255 / 4%);
   content: "";
   pointer-events: none;
-  animation: tide-ring-drift 18s ease-in-out infinite alternate;
+  animation: tide-ring-drift 28s ease-in-out infinite alternate;
 }
 
 .coast-hero > img {
-  animation: island-image-drift 28s ease-in-out infinite alternate;
+  animation: island-image-drift 40s ease-in-out infinite alternate;
   transform-origin: center;
 }
 
 .hero-copy > * {
-  animation: hero-copy-rise 700ms both;
+  animation: hero-copy-rise 900ms both;
 }
 
 .hero-copy > :nth-child(1) {
-  animation-delay: 80ms;
+  animation-delay: 120ms;
 }
 
 .hero-copy > :nth-child(2) {
-  animation-delay: 180ms;
+  animation-delay: 260ms;
 }
 
 .hero-copy > :nth-child(3) {
-  animation-delay: 300ms;
+  animation-delay: 400ms;
 }
 
 .hero-copy > :nth-child(4) {
-  animation-delay: 420ms;
+  animation-delay: 540ms;
 }
 
 @keyframes hero-copy-rise {
@@ -240,16 +241,14 @@ h3 {
   opacity: 0;
   transform: translate3d(0, 24px, 0);
   transition:
-    opacity 650ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    transform 650ms cubic-bezier(0.2, 0.7, 0.2, 1);
+    opacity 800ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 800ms cubic-bezier(0.2, 0.7, 0.2, 1);
   transition-delay: var(--reveal-delay, 0ms);
-  will-change: opacity, transform;
 }
 
 .motion-ready .scroll-reveal.is-visible {
   opacity: 1;
   transform: translate3d(0, 0, 0);
-  will-change: auto;
 }
 
 .motion-ready .feature-card.scroll-reveal.is-visible:hover {
@@ -266,9 +265,9 @@ h3 {
   border-top-width: 4px;
   box-shadow: 0 10px 28px rgb(15 61 96 / 6%);
   transition:
-    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 260ms ease,
-    border-color 260ms ease;
+    transform 380ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 380ms ease,
+    border-color 380ms ease;
 }
 
 .feature-card-01 {
@@ -294,7 +293,7 @@ h3 {
 .coast-gallery-card {
   min-height: 14rem;
   box-shadow: 0 12px 28px rgb(8 56 93 / 12%);
-  transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 320ms ease;
+  transition: transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 420ms ease;
 }
 
 .coast-gallery-card:hover {
@@ -303,7 +302,7 @@ h3 {
 }
 
 .coast-gallery-card img {
-  transition: transform 700ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition: transform 850ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 .coast-gallery-card:hover img {
@@ -311,7 +310,7 @@ h3 {
 }
 
 .coast-gallery-card figcaption {
-  transition: padding 320ms cubic-bezier(0.2, 0.8, 0.2, 1), letter-spacing 320ms ease;
+  transition: padding 420ms cubic-bezier(0.2, 0.8, 0.2, 1), letter-spacing 420ms ease;
 }
 
 .coast-gallery-card:hover figcaption {
@@ -327,7 +326,7 @@ h3 {
 .tour-card img,
 .stay-card > img,
 .destination-card > img {
-  transition: transform 650ms cubic-bezier(0.2, 0.7, 0.2, 1), filter 650ms ease;
+  transition: transform 800ms cubic-bezier(0.2, 0.7, 0.2, 1), filter 800ms ease;
 }
 
 .tour-card:hover img,
@@ -339,7 +338,7 @@ h3 {
 
 .destination-card {
   box-shadow: 0 10px 28px rgb(15 61 96 / 6%);
-  transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 260ms ease;
+  transition: transform 380ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 380ms ease;
 }
 
 .destination-card:hover {
@@ -365,7 +364,7 @@ h3 {
   text-decoration: none;
   box-shadow: 0 4px 12px rgb(8 56 93 / 8%);
   cursor: pointer;
-  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 200ms ease, background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+  transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 320ms ease, background-color 320ms ease, color 320ms ease, border-color 320ms ease;
 }
 
 .action-link:hover,
@@ -396,7 +395,7 @@ h3 {
   color: #a12622;
   font-weight: 700;
   cursor: pointer;
-  transition: transform 200ms ease, background-color 200ms ease, box-shadow 200ms ease;
+  transition: transform 320ms ease, background-color 320ms ease, box-shadow 320ms ease;
 }
 
 .action-danger:hover {
@@ -408,15 +407,60 @@ h3 {
 button:not(:disabled),
 a[href] {
   transition:
-    transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 200ms ease,
-    background-color 200ms ease,
-    color 200ms ease;
+    transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 320ms ease,
+    background-color 320ms ease,
+    color 320ms ease;
 }
 
 button:not(:disabled):active,
 a[href]:active {
   transform: scale(0.98);
+}
+
+@media (max-width: 1023px) {
+  #primary-navigation:not(.hidden) {
+    align-items: stretch;
+  }
+
+  #primary-navigation:not(.hidden) a {
+    min-height: 44px;
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .coast-hero {
+    min-height: 620px;
+  }
+
+  .coast-hero .hero-copy {
+    position: relative;
+    z-index: 2;
+    padding-bottom: 9rem;
+  }
+
+  .dhow-stage {
+    top: auto;
+    right: -8%;
+    bottom: 0;
+    width: 78%;
+    height: 40%;
+    pointer-events: none;
+  }
+
+  .dhow-stage canvas {
+    pointer-events: auto;
+  }
+
+  .field {
+    min-height: 44px;
+  }
+
+  button:not(:disabled) {
+    min-height: 44px;
+  }
 }
 
 .portal-header {
@@ -451,60 +495,52 @@ a[href]:active {
 
 /* Keep existing Tailwind color utilities visually consistent with the coastal theme. */
 [class~="bg-[#f8f7f2]"] {
-  background-color: #f2f8fc;
+  background-color: #f1f7f8;
 }
 
 [class~="bg-[#fbfaf6]"] {
-  background-color: #fbfdff;
+  background-color: #fbf8f0;
 }
 
 [class~="bg-[#efeee7]"],
 [class~="bg-[#f5f3ed]"],
 [class~="bg-[#eeeee6]"],
 [class~="bg-[#e8eee9]"] {
-  background-color: #eaf5fb;
+  background-color: #e6f0f1;
 }
 
 [class~="bg-[#203b35]"] {
-  background-color: #083b66;
+  background-color: #123b52;
 }
 
 [class~="bg-[#31554b]"] {
-  background-color: #0b6488;
+  background-color: #1d5b73;
 }
 
 [class~="bg-[#b96e45]"] {
-  background-color: #ed6f52;
+  background-color: #b7633d;
 }
 
 [class~="bg-[#a45d38]"] {
-  background-color: #d9583f;
+  background-color: #995033;
 }
 
 [class~="text-[#203b35]"] {
-  color: #0a4772;
+  color: #123b52;
 }
 
 [class~="text-[#52615b]"] {
-  color: #466276;
-}
-
-[class~="text-[#66736d]"] {
-  color: #526b7c;
-}
-
-[class~="text-[#7a857f]"] {
-  color: #718798;
+  color: #365565;
 }
 
 [class~="text-[#b96e45]"],
 [class~="text-[#a75f3a]"],
 [class~="text-[#9a5534]"] {
-  color: #d9583f;
+  color: #995033;
 }
 
 [class~="text-[#f1b28b]"] {
-  color: #7ee2e1;
+  color: #a9e2e5;
 }
 
 [class~="border-[#e9e5db]"],
@@ -512,19 +548,19 @@ a[href]:active {
 [class~="border-[#d9d7cd]"],
 [class~="border-[#d9ded8]"],
 [class~="border-[#efede7]"] {
-  border-color: #d5e5ef;
+  border-color: #d1e0e2;
 }
 
 [class~="hover:bg-[#203b35]"]:hover {
-  background-color: #083b66;
+  background-color: #123b52;
 }
 
 [class~="hover:bg-[#31554b]"]:hover {
-  background-color: #0b6488;
+  background-color: #1d5b73;
 }
 
 [class~="hover:bg-[#a45d38]"]:hover {
-  background-color: #d9583f;
+  background-color: #995033;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -559,6 +595,5 @@ a[href]:active {
   .motion-ready .scroll-reveal {
     opacity: 1;
     transform: none;
-    will-change: auto;
   }
 }

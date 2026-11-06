@@ -14,6 +14,3 @@ uploads
 tests
 .pytest_cache
 instance
-compose.yaml
-Caddyfile
-deploy/oracle

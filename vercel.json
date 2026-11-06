@@ -3,7 +3,7 @@
   "buildCommand": "npm --prefix frontend ci && npm --prefix frontend run build",
   "functions": {
     "app.py": {
-      "includeFiles": "{frontend/dist/**,images/**,pictures/**,templates/**,*.html,*.css,*.js,*.svg}"
+      "includeFiles": "{frontend/dist/**,images/**,pictures/**,saas/**,logo.svg}"
     }
   }
 }

@@ -20,6 +20,7 @@ class DarajaError(RuntimeError):
 _TOKEN_CACHE = {}
 _TOKEN_LOCK = threading.Lock()
 _NAIROBI = ZoneInfo('Africa/Nairobi')
+_DARAJA_HOSTS = {'sandbox.safaricom.co.ke', 'api.safaricom.co.ke'}
 
 
 def _configuration():
@@ -68,10 +69,15 @@ def is_configured():
 
 
 def _request_json(url, *, method='POST', payload=None, headers=None, outcome_unknown=False):
+    parsed_url = urllib.parse.urlparse(url)
+    if parsed_url.scheme != 'https' or parsed_url.hostname not in _DARAJA_HOSTS:
+        raise DarajaError('Daraja URL is not allowed.', outcome_unknown=outcome_unknown)
+
     data = None if payload is None else json.dumps(payload).encode('utf-8')
     request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        # The URL is restricted to Safaricom's HTTPS hosts immediately above.
+        with urllib.request.urlopen(request, timeout=15) as response:  # nosec B310
             result = json.loads(response.read().decode('utf-8'))
     except urllib.error.HTTPError as exc:
         try:
