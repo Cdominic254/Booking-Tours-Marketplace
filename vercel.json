@@ -4,13 +4,7 @@
   "functions": {
     "app.py": {
       "runtime": "python3.12",
-      "includeFiles": [
-        "frontend/dist/**",
-        "images/**",
-        "pictures/**",
-        "saas/**",
-        "logo.svg"
-      ]
+      "includeFiles": "{frontend/dist/**,images/**,pictures/**,saas/**,logo.svg}"
     }
   }
 }
