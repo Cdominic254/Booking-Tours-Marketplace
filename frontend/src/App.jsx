@@ -927,11 +927,12 @@ function AboutPage() {
       <section className="bg-[#efeee7] px-5 py-14 sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
           <SectionHeading centered eyebrow="Follow your curiosity" title="Many paths. One unforgettable island." />
-          <div className="grid gap-5 md:grid-cols-3">
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
             {[
               ['images/Lamu_Fort_Museum\'s.jpg', 'Old Town, full of stories', 'Follow the narrow lanes, pause at the museum, and look closer at the carved details of Swahili architecture.'],
               ['images/shela-lamu-kenya-01.jpg', 'Shela, where the shore opens up', 'Take the long way along the sand, feel the sea breeze, and leave a little room in the day for doing nothing.'],
               ['images/Lamu_Donkey_Sanctuary.jpg', 'A slower island rhythm', 'Discover the local traditions, familiar faces, and everyday moments that make Lamu feel like nowhere else.'],
+              ['images/fatma.png', 'Everyday life by the sea', 'Share the simple pleasures of island life: a fresh coconut, warm sand, and the Indian Ocean in the background.'],
             ].map(([image, title, description]) => (
               <article className="overflow-hidden rounded-2xl bg-white" key={title}>
                 <img className="h-56 w-full object-cover" src={`/${image}`} alt={title} loading="lazy" />
