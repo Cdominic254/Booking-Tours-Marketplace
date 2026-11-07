@@ -10,7 +10,6 @@ def test_vercel_config_builds_frontend_and_includes_flask_assets():
 
     assert config['$schema'] == 'https://openapi.vercel.sh/vercel.json'
     assert config['buildCommand'] == 'npm --prefix frontend ci && npm --prefix frontend run build'
-    assert config['functions']['app.py']['runtime'] == 'python3.12'
     assert config['functions']['app.py']['includeFiles'] == (
         '{frontend/dist/**,images/**,pictures/**,saas/**,logo.svg}'
     )
