@@ -72,7 +72,15 @@ IS_PRODUCTION = (
     or os.environ.get('VERCEL') == '1'
     or (bool(os.environ.get('SITE_URL')) and SITE_URL.startswith('https://'))
 )
-RATE_LIMIT_STORAGE_URI = (     os.environ.get('RATELIMIT_STORAGE_URI')     or os.environ.get('RATELIMIT_STORAGE_REDIS_URL')     or 'memory://' )
+# Vercel's Upstash integration exposes the Redis connection as
+# RATELIMIT_STORAGE_REDIS_URL when the resource is connected with the
+# RATELIMIT_STORAGE prefix. Keep RATELIMIT_STORAGE_URI as the canonical
+# setting for other hosting providers and local development.
+RATE_LIMIT_STORAGE_URI = (
+    os.environ.get('RATELIMIT_STORAGE_URI')
+    or os.environ.get('RATELIMIT_STORAGE_REDIS_URL')
+    or 'memory://'
+)
 if IS_PRODUCTION and RATE_LIMIT_STORAGE_URI.startswith('memory://'):
     raise RuntimeError('Configure RATELIMIT_STORAGE_URI with a shared Redis backend in production.')
 SESSION_SECRET_KEY = os.environ.get('SECRET_KEY')
