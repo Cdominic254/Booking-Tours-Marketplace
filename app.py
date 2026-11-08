@@ -544,14 +544,44 @@ def safe_image_url(value):
     raise ValueError('Image must use an http(s) URL or a path under images/, pictures/, or uploads/.')
 
 
-with app.app_context():
-    db.create_all()
-    ensure_booking_payment_columns()
-    ensure_identity_columns()
-    ensure_catalog_columns()
-    ensure_admin_settings()
-    seed_catalogue()
-    bootstrap_admin_account()
+_database_initialized = False
+_database_initialization_lock = threading.Lock()
+
+
+def initialize_database():
+    """Create/update the schema without preventing health checks from loading."""
+    global _database_initialized
+    if _database_initialized:
+        return
+    with _database_initialization_lock:
+        if _database_initialized:
+            return
+        db.create_all()
+        ensure_booking_payment_columns()
+        ensure_identity_columns()
+        ensure_catalog_columns()
+        ensure_admin_settings()
+        seed_catalogue()
+        bootstrap_admin_account()
+        _database_initialized = True
+
+
+if os.environ.get('VERCEL') != '1':
+    with app.app_context():
+        initialize_database()
+
+
+@app.before_request
+def ensure_vercel_database():
+    if os.environ.get('VERCEL') != '1' or request.path in {'/healthz', '/readyz'}:
+        return None
+    try:
+        initialize_database()
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception('Database initialization failed for the request.')
+        return {'error': 'Database unavailable.'}, 503
+    return None
 
 
 def save_submission(submission: dict) -> Submission:
