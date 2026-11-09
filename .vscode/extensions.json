@@ -1,5 +1,12 @@
 {
     "recommendations": [
-        "ennydev-2026.gemma-local-code-mentor"
+        "ennydev-2026.gemma-local-code-mentor",
+        "hidenobunagai.nvidia-nim-provider",
+        "denizhandaklr.copilot-vscode-deepseek",
+        "ollama.ollama",
+        "sst-dev.opencode",
+        "esbenp.prettier-vscode",
+        "ms-python.debugpy",
+        "analytic-signal.snippets-scikit-learn"
     ]
 }

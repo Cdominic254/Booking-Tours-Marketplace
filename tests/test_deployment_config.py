@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -22,3 +25,26 @@ def test_vercel_ignore_excludes_secrets_and_ephemeral_data():
     assert '.env.*' in ignored
     assert 'uploads' in ignored
     assert 'tests' in ignored
+
+
+def test_app_boots_on_vercel_without_secret_key_or_database_url():
+    env = {
+        **os.environ,
+        'VERCEL': '1',
+        'SECRET_KEY': '',
+        'DATABASE_URL': '',
+        'RATELIMIT_STORAGE_URI': '',
+    }
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import app; print(app.RATE_LIMIT_STORAGE_URI)'],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'WARNING: DATABASE_URL is not set' in result.stderr
+    assert 'WARNING: SECRET_KEY is not set' in result.stderr
+    assert 'WARNING: rate limiting falls back' in result.stderr

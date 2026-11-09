@@ -7,6 +7,8 @@ import os
 import re
 import secrets
 import smtplib
+import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -67,25 +69,94 @@ EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').lower() in ('1', 'true'
 whatsapp_phone = re.sub(r'\D', '', os.environ.get('WHATSAPP_BUSINESS_PHONE', ''))
 WHATSAPP_BUSINESS_PHONE = whatsapp_phone if 8 <= len(whatsapp_phone) <= 15 else ''
 SITE_URL = os.environ.get('SITE_URL', 'https://lamutours.2bd.net').strip().rstrip('/')
+IS_VERCEL = os.environ.get('VERCEL') == '1'
 IS_PRODUCTION = (
     os.environ.get('FLASK_ENV', '').lower() == 'production'
-    or os.environ.get('VERCEL') == '1'
+    or IS_VERCEL
     or (bool(os.environ.get('SITE_URL')) and SITE_URL.startswith('https://'))
 )
-# Vercel's Upstash integration exposes the Redis connection as
-# RATELIMIT_STORAGE_REDIS_URL when the resource is connected with the
-# RATELIMIT_STORAGE prefix. Keep RATELIMIT_STORAGE_URI as the canonical
-# setting for other hosting providers and local development.
-RATE_LIMIT_STORAGE_URI = (
-    os.environ.get('RATELIMIT_STORAGE_URI')
-    or os.environ.get('RATELIMIT_STORAGE_REDIS_URL')
-    or 'memory://'
+
+
+def warn_deployment_config(message):
+    """Report a degraded production setting without stopping the deployment.
+
+    An exception raised while importing this module becomes
+    FUNCTION_INVOCATION_FAILED for every request on Vercel, so missing
+    configuration is surfaced as a startup warning instead.
+    """
+    print(f'WARNING: {message}', file=sys.stderr, flush=True)
+
+
+# Redis integrations expose the connection string under different names on
+# Vercel (Upstash / KV marketplace resources prefix the variables, e.g.
+# RATELIMIT_STORAGE_REDIS_URL or RATELIMIT_STORAGE_KV_URL), so every common
+# alias is accepted. "memory://" stays the local-development default.
+RATE_LIMIT_STORAGE_ENV_VARS = (
+    'RATELIMIT_STORAGE_URI',
+    'RATELIMIT_STORAGE_URL',
+    'RATELIMIT_STORAGE_REDIS_URL',
+    'RATELIMIT_STORAGE_KV_URL',
+    'REDIS_URL',
+    'KV_URL',
 )
+RATE_LIMIT_STORAGE_URI = 'memory://'
+for _storage_var in RATE_LIMIT_STORAGE_ENV_VARS:
+    _storage_value = (os.environ.get(_storage_var) or '').strip().strip('"\'')
+    if _storage_value.lower().startswith(('redis://', 'rediss://')):
+        RATE_LIMIT_STORAGE_URI = _storage_value
+        break
+    if _storage_value.lower().startswith('memory://'):
+        RATE_LIMIT_STORAGE_URI = _storage_value
+        break
 if IS_PRODUCTION and RATE_LIMIT_STORAGE_URI.startswith('memory://'):
-    raise RuntimeError('Configure RATELIMIT_STORAGE_URI with a shared Redis backend in production.')
-SESSION_SECRET_KEY = os.environ.get('SECRET_KEY')
-if IS_PRODUCTION and not SESSION_SECRET_KEY:
-    raise RuntimeError('Configure a persistent SECRET_KEY in production.')
+    # Serverless instances are temporary, so limits stay locally scoped until a
+    # shared backend is configured.
+    warn_deployment_config(
+        'rate limiting falls back to memory:// in production; set RATELIMIT_STORAGE_URI '
+        'to a shared Redis URL (rediss://...) for cross-instance limits.'
+    )
+
+# Database and session secrets are resolved before the Flask app is created so
+# a missing value degrades the deployment instead of aborting the import.
+database_url = (os.environ.get('DATABASE_URL') or '').strip()
+if database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+if not database_url:
+    if IS_VERCEL:
+        # Serverless bundles are read-only; /tmp is the only writable location.
+        sqlite_path = os.path.join(tempfile.gettempdir(), 'submissions.db')
+        warn_deployment_config(
+            'DATABASE_URL is not set, so ephemeral SQLite is used at '
+            f'{sqlite_path}. Bookings and accounts are lost on every cold start; '
+            'connect PostgreSQL (DATABASE_URL=postgresql://...).'
+        )
+    else:
+        sqlite_path = os.path.join(BASE_DIR, 'submissions.db')
+    database_url = f'sqlite:///{sqlite_path}'
+
+
+def resolve_session_secret_key():
+    """Pick a session signing key instead of refusing to start without one."""
+    configured_key = (os.environ.get('SECRET_KEY') or '').strip()
+    if configured_key:
+        return configured_key
+    if database_url.startswith('postgresql://'):
+        # Derive a stable key so every serverless instance agrees on session
+        # signatures; the DATABASE_URL credentials stay private.
+        warn_deployment_config(
+            'SECRET_KEY is not set; session signatures are derived from DATABASE_URL. '
+            'Set SECRET_KEY to a long random value and invalidate existing sessions.'
+        )
+        return hashlib.sha256(f'lamu-tours-session|{database_url}'.encode('utf-8')).hexdigest()
+    warn_deployment_config(
+        'SECRET_KEY is not set and no PostgreSQL DATABASE_URL is available, so an '
+        'ephemeral key is generated. Sessions, CSRF tokens, and login cookies will not '
+        'survive a restart or reach another instance; set SECRET_KEY.'
+    )
+    return secrets.token_hex(32)
+
+
+SESSION_SECRET_KEY = resolve_session_secret_key()
 
 CURRENCY_CACHE_TTL = 60 * 60 * 12
 CURRENCY_API_TIMEOUT = 4
@@ -94,7 +165,7 @@ _exchange_rates_cache = {'expires_at': 0.0, 'rates': None, 'updated_at': None}
 _geolocation_cache = {}
 
 app = Flask(__name__, static_folder=None)
-app.config['SECRET_KEY'] = SESSION_SECRET_KEY or secrets.token_hex(32)
+app.config['SECRET_KEY'] = SESSION_SECRET_KEY
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = IS_PRODUCTION or os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() in ('1', 'true', 'yes')
@@ -118,13 +189,7 @@ def add_security_headers(response):
     return response
 
 
-database_url = os.environ.get('DATABASE_URL')
-if os.environ.get('VERCEL') == '1' and not database_url:
-    raise RuntimeError('Configure DATABASE_URL with persistent PostgreSQL before deploying to Vercel.')
-if database_url and database_url.startswith('postgres://'):
-    database_url = database_url.replace('postgres://', 'postgresql://', 1)
-sqlite_path = os.path.join(BASE_DIR, 'submissions.db')
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url or f'sqlite:///{sqlite_path}'
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 db.init_app(app)

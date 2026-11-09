@@ -57,7 +57,7 @@ Open the Vite URL printed in the terminal, normally `http://127.0.0.1:5173`. The
 
 ## Configuration
 
-Production settings are listed in `.env.example`. The app requires a persistent `SECRET_KEY`, PostgreSQL `DATABASE_URL`, and shared Redis `RATELIMIT_STORAGE_URI` when `SITE_URL` is HTTPS or `FLASK_ENV=production`. Daraja and email integrations are optional until configured. Never commit `.env` or put payment credentials in a URL.
+Production settings are listed in `.env.example`. A persistent `SECRET_KEY`, PostgreSQL `DATABASE_URL`, and shared Redis `RATELIMIT_STORAGE_URI` are required for a healthy production deployment, but the app still boots when they are missing and logs a `WARNING` at startup instead of refusing to serve: session signatures are derived from `DATABASE_URL` (or a random key when that is unavailable), the database falls back to ephemeral SQLite, and rate limits become per-instance. Daraja and email integrations are optional until configured. Never commit `.env` or put payment credentials in a URL.
 
 For local development, SQLite and the in-memory rate limiter are supported. They are not suitable for production or multiple application instances.
 
@@ -87,7 +87,7 @@ Configure these production and preview environment variables in the Vercel proje
 - `DARAJA_ENV=sandbox` and Daraja credentials/callback URL while testing
 - Email settings if contact and booking emails are required
 
-Vercel's function filesystem is ephemeral. Do not configure SQLite or `UPLOAD_DIR`; image upload endpoints intentionally return 503 on Vercel until persistent object storage is integrated. Bundled `images/` and `pictures/` assets continue to serve normally. Verify `/healthz`, `/readyz`, page navigation, booking, and Daraja callbacks after deployment.
+Vercel's function filesystem is ephemeral. Do not configure SQLite or `UPLOAD_DIR`; without `DATABASE_URL` the function boots on ephemeral SQLite under `/tmp` and every cold start loses bookings and accounts, and image upload endpoints intentionally return 503 on Vercel until persistent object storage is integrated. Bundled `images/` and `pictures/` assets continue to serve normally. Verify `/healthz`, `/readyz`, page navigation, booking, and Daraja callbacks after deployment.
 
 ### CI/CD
 
