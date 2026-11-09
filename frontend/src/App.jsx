@@ -187,8 +187,12 @@ function Footer() {
             <a className="hover:text-white" href="/contact.html">Contact our team</a>
             <a className="hover:text-white" href="mailto:info@lamutours.com">info@lamutours.com</a>
             <a className="hover:text-white" href="mailto:cdominic.cm@gmail.com">cdominic.cm@gmail.com</a>
-            <a className="hover:text-white" href="mailto:justerkarendi.carlos@gmail.com">justerkarendi.carlos@gmail.com</a>
-            <a className="hover:text-white" href="tel:0704143718">0704143718</a>
+            <a className="inline-flex items-center gap-2 hover:text-white" href="tel:+254704143718">
+              <svg aria-hidden="true" className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6.4 3.5h2.3l1.4 3.9-1.9 1.3a11.2 11.2 0 0 0 5.1 5.1l1.3-1.9 3.9 1.4v2.3a2 2 0 0 1-2.2 2A16.6 16.6 0 0 1 4.4 5.7a2 2 0 0 1 2-2.2Z" />
+              </svg>
+              <span>Call 0704143718</span>
+            </a>
             <span>Lamu Island, Kenya</span>
           </div>
         </div>
@@ -990,8 +994,12 @@ function ContactPage() {
               Lamu Island, Kenya<br />
               <a className="font-medium text-[#9a5534] hover:underline" href="mailto:info@lamutours.com">info@lamutours.com</a><br />
               <a className="font-medium text-[#9a5534] hover:underline" href="mailto:cdominic.cm@gmail.com">cdominic.cm@gmail.com</a><br />
-              <a className="font-medium text-[#9a5534] hover:underline" href="mailto:justerkarendi.carlos@gmail.com">justerkarendi.carlos@gmail.com</a><br />
-              <a className="font-medium text-[#9a5534] hover:underline" href="tel:0704143718">0704143718</a>
+              <a className="inline-flex items-center gap-2 font-medium text-[#9a5534] hover:underline" href="tel:+254704143718">
+                <svg aria-hidden="true" className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6.4 3.5h2.3l1.4 3.9-1.9 1.3a11.2 11.2 0 0 0 5.1 5.1l1.3-1.9 3.9 1.4v2.3a2 2 0 0 1-2.2 2A16.6 16.6 0 0 1 4.4 5.7a2 2 0 0 1 2-2.2Z" />
+                </svg>
+                <span>Call 0704143718</span>
+              </a>
             </p>
           </div>
         </div>
