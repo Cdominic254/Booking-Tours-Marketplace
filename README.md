@@ -1,14 +1,14 @@
-# Lamu Tours & Booking Agency
+# Kenya Tours & Marketplace
 
-Booking and tour-management website for Lamu. Flask provides the API and production server, while the React/Vite frontend is built into `frontend/dist` for deployment.
+Booking and tour-management website for Kenya-wide travel. Lamu is one of eight bookable destinations (alongside Mombasa, Diani, Watamu, Nairobi, Lake Naivasha, the Maasai Mara, and Amboseli) rather than the subject of the whole site. Flask provides the API and production server, while the React/Vite frontend is built into `frontend/dist` for deployment.
 
 ## Features
 
-- Tour discovery, availability, bookings, and customer booking lookup
+- Tour discovery, destination filtering, availability, bookings, and customer booking lookup
 - Admin and vendor portals, catalogue management, and reviews
 - Safaricom Daraja M-Pesa STK Push payments
 - Contact submissions, optional email notifications, and currency conversion
-- Bundled Lamu image assets served from `/images` and `/pictures`
+- Bundled destination image assets served from `/images` and `/pictures`
 
 ## Tech Stack
 

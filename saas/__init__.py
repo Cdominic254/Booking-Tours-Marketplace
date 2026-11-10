@@ -1,1 +1,1 @@
-"""Application domain modules for the Lamu Tours SaaS backend."""
+"""Application domain modules for the Kenya Tours SaaS backend."""

@@ -9,13 +9,14 @@ class Tour(db.Model):
     description = db.Column(db.Text, nullable=False)
     duration = db.Column(db.String(80), nullable=False)
     price = db.Column(db.Integer, nullable=False)
-    category = db.Column(db.String(100), nullable=False, default='Island experiences')
+    category = db.Column(db.String(100), nullable=False, default='Experiences')
     itinerary = db.Column(db.Text, nullable=False, default='')
     inclusions = db.Column(db.Text, nullable=False, default='')
     exclusions = db.Column(db.Text, nullable=False, default='')
-    pickup_point = db.Column(db.String(200), nullable=False, default='Lamu Town waterfront')
+    pickup_point = db.Column(db.String(200), nullable=False, default='Confirm with your operator')
     min_group_size = db.Column(db.Integer, nullable=False, default=1)
     max_group_size = db.Column(db.Integer, nullable=False, default=12)
+    destination = db.Column(db.String(120), nullable=False, default='lamu', index=True)
     image_url = db.Column(db.String(500), nullable=True)
     vendor_id = db.Column(db.Integer, db.ForeignKey('vendor_account.id'), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -34,6 +35,7 @@ class Tour(db.Model):
             'pickup_point': self.pickup_point,
             'min_group_size': self.min_group_size,
             'max_group_size': self.max_group_size,
+            'destination': self.destination,
             'image_url': self.image_url,
         }
 
@@ -69,6 +71,7 @@ class Property(db.Model):
     name = db.Column(db.String(150), nullable=False)
     property_type = db.Column(db.String(50), nullable=False)
     location = db.Column(db.String(120), nullable=False)
+    destination = db.Column(db.String(120), nullable=False, default='lamu', index=True)
     amenities = db.Column(db.Text, nullable=False, default='')
     latitude = db.Column(db.Float, nullable=True)
     longitude = db.Column(db.Float, nullable=True)
@@ -85,6 +88,7 @@ class Property(db.Model):
             'name': self.name,
             'property_type': self.property_type,
             'location': self.location,
+            'destination': self.destination,
             'amenities': self.amenities.splitlines(),
             'latitude': self.latitude,
             'longitude': self.longitude,

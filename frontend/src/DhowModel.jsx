@@ -341,9 +341,9 @@ export default function DhowModel() {
       className={`dhow-stage ${desktopScene ? '' : 'dhow-stage--static'}`}
       ref={stageRef}
       role="img"
-      aria-label="Interactive 3D model of a traditional Lamu dhow. Drag to turn the boat."
+      aria-label="Interactive 3D model of a traditional Kenyan dhow. Drag to turn the boat."
     >
-      {(!desktopScene || unavailable) && <img src="/images/IMG_2026-03-23-17-36-36-712.jpg" alt="Traditional dhow boats on the water in Lamu" />}
+      {(!desktopScene || unavailable) && <img src="/images/IMG_2026-03-23-17-36-36-712.jpg" alt="Traditional dhow boats on the water off the Kenyan coast" />}
       {desktopScene && !unavailable && <span className="dhow-model-hint" aria-hidden="true">Drag to explore the dhow</span>}
     </div>
   );

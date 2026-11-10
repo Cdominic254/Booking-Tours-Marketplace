@@ -56,7 +56,7 @@ def customer_trip(monkeypatch):
             itinerary='Meet your guide\nSail along the coast',
             inclusions='Local guide',
             exclusions='Meals',
-            pickup_point='Lamu waterfront',
+            pickup_point='Kenya Tours meeting point',
             min_group_size=1,
             max_group_size=6,
         )
@@ -349,8 +349,8 @@ def test_m_pesa_callback_marks_paid_only_after_daraja_query_verification(custome
         assert document.data.startswith(b'%PDF-')
     attachments = list(sent_messages[0].iter_attachments())
     assert {attachment.get_filename() for attachment in attachments} == {
-        f"Lamu-Tours-Invoice-{booking_data['id']}.pdf",
-        f"Lamu-Tours-Receipt-{booking_data['id']}.pdf",
+        f"Kenya-Tours-Invoice-{booking_data['id']}.pdf",
+        f"Kenya-Tours-Receipt-{booking_data['id']}.pdf",
     }
 
 

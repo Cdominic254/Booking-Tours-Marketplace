@@ -30,7 +30,7 @@ jobs:
 
       - name: Run backend tests
         env:
-          DATABASE_URL: sqlite:////tmp/lamu-tours-ci.db
+          DATABASE_URL: sqlite:////tmp/kenya-tours-ci.db
           SECRET_KEY: ci-only-session-secret
           SITE_URL: http://127.0.0.1:5000
           RATELIMIT_STORAGE_URI: memory://

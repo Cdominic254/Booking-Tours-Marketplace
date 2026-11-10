@@ -17,11 +17,43 @@ const primaryLinks = [
   ['/tours.html', 'Tours'],
   ['/booking.html', 'Plan your trip'],
   ['/contact.html', 'Contact'],
-  ['/about-lamu.html', 'About Lamu'],
+  ['/about-kenya.html', 'About Kenya'],
 ];
 const legacyTourSlugs = ['dhow', 'old-town', 'sandbank', 'fishing', 'cultural', 'water-sports', 'day-trips'];
 const fallbackImage = '/images/Spiritedpursuit_leelitumbe-106_lamu_kenya.webp';
 const emptyCatalogue = { tours: [], properties: [], destinations: [] };
+const WHATSAPP_GREETING = "Hello, I'm planning a trip to Kenya and would like some information.";
+const CONTACT_PHONE_DISPLAY = '0704143718';
+const CONTACT_PHONE_HREF = 'tel:+254704143718';
+
+function useWhatsAppPhone() {
+  const [phone, setPhone] = useState(document.documentElement.dataset.whatsappPhone || '');
+
+  useEffect(() => {
+    const updatePhone = () => setPhone(document.documentElement.dataset.whatsappPhone || '');
+    document.addEventListener('kenya-catalogue-ready', updatePhone);
+    updatePhone();
+    return () => document.removeEventListener('kenya-catalogue-ready', updatePhone);
+  }, []);
+
+  return phone;
+}
+
+function PhoneIcon({ className = 'h-4 w-4 shrink-0' }) {
+  return (
+    <svg aria-hidden="true" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.4 3.5h2.3l1.4 3.9-1.9 1.3a11.2 11.2 0 0 0 5.1 5.1l1.3-1.9 3.9 1.4v2.3a2 2 0 0 1-2.2 2A16.6 16.6 0 0 1 4.4 5.7a2 2 0 0 1 2-2.2Z" />
+    </svg>
+  );
+}
+
+function WhatsAppIcon({ className = 'h-4 w-4 shrink-0' }) {
+  return (
+    <svg aria-hidden="true" className={className} viewBox="0 0 32 32" fill="currentColor">
+      <path d="M16.04 3.2A12.75 12.75 0 0 0 5.11 22.52L3.42 28.7l6.33-1.66A12.78 12.78 0 1 0 16.04 3.2Zm0 23.24c-2 0-3.96-.54-5.67-1.56l-.4-.24-3.76.99 1-3.66-.27-.42a10.4 10.4 0 1 1 9.1 4.89Zm5.71-7.8c-.31-.16-1.84-.91-2.13-1.01-.28-.1-.49-.16-.7.16-.2.31-.8 1.01-.98 1.22-.18.2-.36.23-.67.08-.31-.16-1.3-.48-2.48-1.53-.92-.82-1.54-1.83-1.72-2.14-.18-.31-.02-.48.14-.64.14-.14.31-.36.46-.54.16-.18.2-.31.31-.52.1-.21.05-.39-.03-.54-.08-.16-.7-1.69-.96-2.31-.25-.61-.51-.52-.7-.53h-.6c-.21 0-.54.08-.82.39-.28.31-1.07 1.04-1.07 2.53s1.1 2.94 1.25 3.14c.15.21 2.15 3.29 5.2 4.61.72.31 1.28.5 1.72.64.72.23 1.37.2 1.89.12.58-.09 1.84-.75 2.1-1.48.26-.72.26-1.35.18-1.48-.08-.13-.28-.21-.59-.36Z" />
+    </svg>
+  );
+}
 
 function imageUrl(url) {
   if (!url || !/^(https?:\/\/|\/?images\/|\/?pictures\/)/i.test(url) || url.split('/').includes('..')) {
@@ -86,18 +118,18 @@ function Header() {
 
   function toggleLanguage() {
     const nextLanguage = language === 'en' ? 'sw' : 'en';
-    window.setLamuLanguage?.(nextLanguage);
+    window.setKenyaLanguage?.(nextLanguage);
     setLanguage(nextLanguage);
   }
 
   return (
     <header className="relative z-20 border-b border-[#e9e5db] bg-[#fbfaf6] shadow-sm shadow-sky-950/5">
       <div className="mx-auto grid max-w-7xl grid-cols-[1fr_auto] items-center gap-x-4 gap-y-3 px-5 py-4 sm:px-8">
-        <a className="brand-lockup flex shrink-0 items-center gap-3 sm:gap-4" href="/index.html" aria-label="Lamu Tours — island experiences in Kenya">
+        <a className="brand-lockup flex shrink-0 items-center gap-3 sm:gap-4" href="/index.html" aria-label="Kenya Tours & Marketplace — tours and stays across Kenya">
           <img className="brand-mark h-16 w-16 sm:h-20 sm:w-20" src="/logo.svg" alt="" />
           <span className="flex flex-col">
-            <span className="brand-name text-3xl font-bold tracking-tight text-[#203b35] sm:text-4xl">Lamu Tours</span>
-            <span className="brand-tagline text-[0.68rem] font-bold uppercase tracking-[0.16em] text-[#52718a] sm:text-sm">Island experiences · Kenya</span>
+            <span className="brand-name text-2xl font-bold tracking-tight text-[#203b35] sm:text-3xl">Kenya Tours & Marketplace</span>
+            <span className="brand-tagline text-[0.68rem] font-bold uppercase tracking-[0.16em] text-[#52718a] sm:text-sm">Tours &amp; stays · Kenya</span>
           </span>
         </a>
         <div className="flex items-center justify-self-end gap-2 sm:gap-3 max-[480px]:col-span-2 max-[480px]:w-full max-[480px]:justify-end">
@@ -157,27 +189,29 @@ function Header() {
 }
 
 function Footer() {
+  const phone = useWhatsAppPhone();
+
   return (
     <footer className="mt-20 bg-[#203b35] text-[#e8eee9]">
       <div className="mx-auto grid max-w-7xl gap-10 px-5 py-12 sm:px-8 md:grid-cols-[1.4fr_1fr_1fr]">
         <div>
-          <a className="brand-lockup flex items-center gap-3 text-white" href="/index.html" aria-label="Lamu Tours home">
+          <a className="brand-lockup flex items-center gap-3 text-white" href="/index.html" aria-label="Kenya Tours & Marketplace home">
             <img className="brand-mark h-12 w-12" src="/logo.svg" alt="" />
             <span className="flex flex-col">
-              <span className="brand-name text-xl font-bold text-white">Lamu Tours</span>
-              <span className="brand-tagline text-[0.6rem] font-bold uppercase tracking-[0.17em] text-[#8de6e4]">Island experiences · Kenya</span>
+              <span className="brand-name text-lg font-bold text-white sm:text-xl">Kenya Tours & Marketplace</span>
+              <span className="brand-tagline text-[0.6rem] font-bold uppercase tracking-[0.17em] text-[#8de6e4]">Tours &amp; stays · Kenya</span>
             </span>
           </a>
           <p className="mt-4 max-w-sm text-sm leading-6 text-[#c4d0c9]">
-            Find the coast through local eyes: unhurried dhow sails, storied streets, and stays with a sense of place.
+            Book the coast, the city, and the savannah with people who live there: dhow sails, heritage walks, safaris, and stays with a sense of place.
           </p>
         </div>
         <div>
           <h2 className="font-semibold text-white">Explore</h2>
           <div className="mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
-            <a className="hover:text-white" href="/tours.html">Island tours</a>
+            <a className="hover:text-white" href="/tours.html">Kenya tours</a>
             <a className="hover:text-white" href="/booking.html">Plan your trip</a>
-            <a className="hover:text-white" href="/about-lamu.html">About Lamu</a>
+            <a className="hover:text-white" href="/about-kenya.html">About Kenya</a>
             <a className="hover:text-white" href="/vendor/login">Vendor portal</a>
           </div>
         </div>
@@ -185,20 +219,20 @@ function Footer() {
           <h2 className="font-semibold text-white">Get in touch</h2>
           <div className="mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
             <a className="hover:text-white" href="/contact.html">Contact our team</a>
-            <a className="hover:text-white" href="mailto:info@lamutours.com">info@lamutours.com</a>
-            <a className="hover:text-white" href="mailto:cdominic.cm@gmail.com">cdominic.cm@gmail.com</a>
-            <a className="inline-flex items-center gap-2 hover:text-white" href="tel:+254704143718">
-              <svg aria-hidden="true" className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6.4 3.5h2.3l1.4 3.9-1.9 1.3a11.2 11.2 0 0 0 5.1 5.1l1.3-1.9 3.9 1.4v2.3a2 2 0 0 1-2.2 2A16.6 16.6 0 0 1 4.4 5.7a2 2 0 0 1 2-2.2Z" />
-              </svg>
-              <span>Call 0704143718</span>
+            <a className="inline-flex items-center gap-2 hover:text-white" href={CONTACT_PHONE_HREF}>
+              <PhoneIcon />
+              <span>Call {CONTACT_PHONE_DISPLAY}</span>
             </a>
-            <span>Lamu Island, Kenya</span>
+            <a className="inline-flex items-center gap-2 hover:text-white" href={whatsappUrl(WHATSAPP_GREETING, phone)} target="_blank" rel="noopener noreferrer">
+              <WhatsAppIcon />
+              <span>WhatsApp us</span>
+            </a>
+            <span>Kenya</span>
           </div>
         </div>
       </div>
       <div className="border-t border-white/10 px-5 py-5 text-center text-xs text-[#c4d0c9]">
-        © 2026 Lamu Tours &amp; Booking Agency. All rights reserved.
+        © 2026 Kenya Tours &amp; Marketplace. All rights reserved.
       </div>
     </footer>
   );
@@ -219,28 +253,18 @@ function PageShell({ children }) {
 }
 
 function FloatingWhatsApp() {
-  const [phone, setPhone] = useState(document.documentElement.dataset.whatsappPhone || '');
-  const message = "Hello, I'm planning a trip to Lamu and would like some information.";
-
-  useEffect(() => {
-    const updatePhone = () => setPhone(document.documentElement.dataset.whatsappPhone || '');
-    document.addEventListener('lamu-catalogue-ready', updatePhone);
-    updatePhone();
-    return () => document.removeEventListener('lamu-catalogue-ready', updatePhone);
-  }, []);
+  const phone = useWhatsAppPhone();
 
   return (
     <a
       className="fixed bottom-5 right-5 z-50 inline-flex min-h-14 items-center gap-3 rounded-full bg-[#16833b] px-4 text-sm font-bold text-white shadow-xl shadow-slate-950/25 transition hover:-translate-y-1 hover:bg-[#116b30] focus-visible:outline-white sm:bottom-7 sm:right-7"
-      href={whatsappUrl(message, phone)}
+      href={whatsappUrl(WHATSAPP_GREETING, phone)}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label="Chat with Lamu Tours on WhatsApp (opens in a new tab)"
+      aria-label="Chat with Kenya Tours & Marketplace on WhatsApp (opens in a new tab)"
       title="Chat with us on WhatsApp"
     >
-      <svg aria-hidden="true" className="h-7 w-7 shrink-0" viewBox="0 0 32 32" fill="currentColor">
-        <path d="M16.04 3.2A12.75 12.75 0 0 0 5.11 22.52L3.42 28.7l6.33-1.66A12.78 12.78 0 1 0 16.04 3.2Zm0 23.24c-2 0-3.96-.54-5.67-1.56l-.4-.24-3.76.99 1-3.66-.27-.42a10.4 10.4 0 1 1 9.1 4.89Zm5.71-7.8c-.31-.16-1.84-.91-2.13-1.01-.28-.1-.49-.16-.7.16-.2.31-.8 1.01-.98 1.22-.18.2-.36.23-.67.08-.31-.16-1.3-.48-2.48-1.53-.92-.82-1.54-1.83-1.72-2.14-.18-.31-.02-.48.14-.64.14-.14.31-.36.46-.54.16-.18.2-.31.31-.52.1-.21.05-.39-.03-.54-.08-.16-.7-1.69-.96-2.31-.25-.61-.51-.52-.7-.53h-.6c-.21 0-.54.08-.82.39-.28.31-1.07 1.04-1.07 2.53s1.1 2.94 1.25 3.14c.15.21 2.15 3.29 5.2 4.61.72.31 1.28.5 1.72.64.72.23 1.37.2 1.89.12.58-.09 1.84-.75 2.1-1.48.26-.72.26-1.35.18-1.48-.08-.13-.28-.21-.59-.36Z" />
-      </svg>
+      <WhatsAppIcon className="h-7 w-7 shrink-0" />
       <span className="hidden sm:inline">Chat with us</span>
     </a>
   );
@@ -275,7 +299,7 @@ function TourCard({ tour, currency }) {
         <img className="h-56 w-full object-cover" src={imageUrl(tour.image_url)} alt={tour.name} loading="lazy" />
       </a>
       <div className="p-5">
-        <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[#a75f3a]">{tour.category || 'Island experiences'}</p>
+        <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[#a75f3a]">{tour.category || 'Experiences'}</p>
         <div className="flex items-start justify-between gap-3">
           <h3 className="display-font text-2xl text-[#203b35]">{tour.name}</h3>
           <span className="shrink-0 rounded-full bg-[#f3eee6] px-3 py-1 text-xs font-semibold text-[#735744]">{tour.duration}</span>
@@ -397,13 +421,15 @@ function ReviewPanel({ targetType, targetId, readOnly = false }) {
 
 function HomePage({ catalogue, loading, error, retry, currency }) {
   const [location, setLocation] = useState('');
+  const [stayDestination, setStayDestination] = useState('');
   const [guests, setGuests] = useState('');
   const [propertyType, setPropertyType] = useState('');
   const visibleProperties = catalogue.properties.filter((property) => {
     const matchesLocation = !location || `${property.location} ${property.name}`.toLowerCase().includes(location.toLowerCase());
+    const matchesDestination = !stayDestination || property.destination === stayDestination;
     const matchesGuests = !guests || property.guests >= Number(guests);
     const matchesType = !propertyType || property.property_type.toLowerCase() === propertyType;
-    return matchesLocation && matchesGuests && matchesType;
+    return matchesLocation && matchesDestination && matchesGuests && matchesType;
   });
 
   return (
@@ -414,20 +440,20 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         <Suspense fallback={null}><DhowModel /></Suspense>
         <div className="mx-auto flex min-h-[590px] max-w-7xl items-center px-5 py-20 sm:min-h-[650px] sm:px-8">
           <div className="hero-copy max-w-2xl text-white">
-            <p className="mb-5 text-sm font-bold uppercase tracking-[0.24em] text-[#f1b28b]">An island off the beaten tide · Kenya</p>
-            <h1 className="display-font text-5xl leading-[1.05] sm:text-7xl">Let the tides lead you to Lamu.</h1>
+            <p className="mb-5 text-sm font-bold uppercase tracking-[0.24em] text-[#f1b28b]">Coast · City · Savannah · Rift Valley</p>
+            <h1 className="display-font text-5xl leading-[1.05] sm:text-7xl">Kenya, one destination at a time.</h1>
             <p className="mt-6 max-w-xl text-lg leading-8 text-white/85">
-              Follow the dhow routes, wander centuries-old Swahili lanes, and let the Indian Ocean set the pace.
+              Sail a dhow off Lamu, walk the old streets of Mombasa, cycle beneath the Rift Valley cliffs, then watch the sun go down over the Mara.
             </p>
             <div className="mt-9 flex flex-wrap gap-3">
-              <ButtonLink href="/tours.html">Find your island experience</ButtonLink>
-              <ButtonLink href="/about-lamu.html" secondary>Get to know Lamu</ButtonLink>
+              <ButtonLink href="/tours.html">Find your Kenyan experience</ButtonLink>
+              <ButtonLink href="/about-kenya.html" secondary>Get to know Kenya</ButtonLink>
             </div>
           </div>
         </div>
         <div className="absolute bottom-5 right-5 hidden max-w-xs rounded-2xl border border-white/25 bg-[#203b35]/65 p-4 text-sm text-white backdrop-blur sm:block">
-          <span className="block font-semibold">Come for the coastline. Stay for the feeling.</span>
-          <span className="mt-1 block text-white/75">Ocean air, Swahili heritage, and a welcome that feels like yours.</span>
+          <span className="block font-semibold">Eight destinations. One country.</span>
+          <span className="mt-1 block text-white/75">Coastal Swahili towns, big-city wildlife, and open savannah — all booked through one team.</span>
         </div>
       </section>
 
@@ -439,9 +465,9 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         />
         <div className="grid gap-5 md:grid-cols-3">
           {[
-            ['01', 'Walk through living history', 'Follow winding lanes, carved doorways, and the stories that make Lamu Old Town unforgettable.', '/about-lamu.html'],
-            ['02', 'Let the sea set the pace', 'Step aboard a traditional dhow and discover island channels, open water, and sandy shores.', '/tours.html'],
-            ['03', 'Wake up by the water', 'Find a welcoming guest house, a quiet villa, or a home base for longer island days.', '#places-to-stay'],
+            ['01', 'Walk through living history', 'Follow winding lanes, carved doorways, and the stories that make Kenya’s Swahili old towns unforgettable.', '/about-kenya.html'],
+            ['02', 'Let the sea set the pace', 'Step aboard a traditional dhow and discover reef channels, open water, and sandy shores.', '/tours.html'],
+            ['03', 'Wake up somewhere new', 'Find a welcoming guest house, a quiet villa, or a lodge close to the wildlife you came to see.', '#places-to-stay'],
           ].map(([number, title, description, href]) => (
             <a className={`feature-card feature-card-${number} rounded-2xl border border-[#e9e5db] bg-white p-6 transition hover:border-[#c98d6b] hover:shadow-lg`} href={href} key={number}>
               <span className="text-sm font-bold text-[#b96e45]">{number}</span>
@@ -457,8 +483,8 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
           {[
             ['/pictures/187168867.jpg', 'Turquoise coastal waters', 'Blue-water days'],
             ['/images/IMG_2026-03-23-17-36-36-712.jpg', 'Traditional dhow boats on the water', 'Made for the sea'],
-            ['/pictures/426299433.jpg', 'Island coastline in Lamu', 'Find your horizon'],
-            ['/pictures/552015001.jpg', 'Lamu waterfront scene', 'A life by the coast'],
+            ['/pictures/426299433.jpg', 'Kenyan coastline near Lamu', 'Find your horizon'],
+            ['/pictures/552015001.jpg', 'Waterfront on the Kenyan coast', 'A life by the coast'],
           ].map(([src, alt, caption]) => (
             <figure className="coast-gallery-card group relative overflow-hidden rounded-2xl" key={src}>
               <img className="h-56 w-full object-cover transition duration-500 group-hover:scale-105" src={src} alt={alt} loading="lazy" />
@@ -471,13 +497,13 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
       <section className="bg-[#efeee7] px-5 py-16 sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
           <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
-            <SectionHeading eyebrow="Go at your own pace" title="The best island days are never hurried." />
+            <SectionHeading eyebrow="Go at your own pace" title="The best travel days are never hurried." />
             <ButtonLink className="mb-8 self-start" href="/tours.html">Explore every experience →</ButtonLink>
           </div>
           {loading || error ? <LoadingState error={error} onRetry={retry} /> : (
             <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
               {catalogue.tours.slice(0, 3).map((tour) => <TourCard currency={currency} key={tour.slug} tour={tour} />)}
-              {catalogue.tours.length === 0 && <p className="text-[#52615b]">New island experiences are on the way. Check back soon.</p>}
+              {catalogue.tours.length === 0 && <p className="text-[#52615b]">New Kenyan experiences are on the way. Check back soon.</p>}
             </div>
           )}
         </div>
@@ -487,23 +513,23 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         <section className="bg-[#efeee7] px-5 py-16 sm:px-8 sm:py-20">
           <div className="mx-auto max-w-7xl">
             <SectionHeading
-              eyebrow="A coast of many moods"
+              eyebrow="Eight destinations, one country"
               title="Find the place that feels like yours."
-              description="From lively old-town lanes to quiet island shores, explore Lamu’s neighborhoods and discover what makes each one special."
+              description="From Swahili old towns on the coast to the open plains below Kilimanjaro, pick a destination and see what you can book there."
             />
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {catalogue.destinations.map((destination) => (
-                <article className="destination-card overflow-hidden rounded-2xl border border-[#e9e5db] bg-white shadow-sm" key={destination.slug}>
-                  <img className="h-48 w-full object-cover" src={imageUrl(destination.image_url)} alt={destination.name} loading="lazy" />
+              {catalogue.destinations.map((item) => (
+                <article className="destination-card overflow-hidden rounded-2xl border border-[#e9e5db] bg-white shadow-sm" key={item.slug}>
+                  <img className="h-48 w-full object-cover" src={imageUrl(item.image_url)} alt={item.name} loading="lazy" />
                   <div className="p-5">
-                    <h3 className="display-font text-2xl text-[#203b35]">{destination.name}</h3>
-                    <p className="mt-2 min-h-12 text-sm leading-6 text-[#52615b]">{destination.description}</p>
+                    <h3 className="display-font text-2xl text-[#203b35]">{item.name}</h3>
+                    <p className="mt-2 min-h-12 text-sm leading-6 text-[#52615b]">{item.description}</p>
                     <a
                       className="action-link mt-4"
                       href="#places-to-stay"
-                      onClick={() => setLocation(destination.search_location)}
+                      onClick={() => { setStayDestination(item.slug); setLocation(''); }}
                     >
-                      Find stays nearby →
+                      Find stays in {item.name} →
                     </a>
                   </div>
                 </article>
@@ -516,14 +542,21 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
       <section id="places-to-stay" className="mx-auto max-w-7xl scroll-mt-8 px-5 py-16 sm:px-8 sm:py-20">
         <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
           <SectionHeading
-            eyebrow="Settle into island life"
+            eyebrow="Settle in wherever you land"
             title="A welcoming place to call your own."
-            description="Search Lamu stays by neighborhood, guest count, and style. Find a calm home base for your days by the coast."
+            description="Search stays across Kenya by destination, guest count, and style. Find a calm base for the days you have planned."
           />
-          <form className="mb-8 grid gap-3 rounded-2xl border border-[#e9e5db] bg-white p-4 sm:grid-cols-2 lg:grid-cols-[1fr_9rem_9rem_auto]" onSubmit={(event) => event.preventDefault()}>
+          <form className="mb-8 grid gap-3 rounded-2xl border border-[#e9e5db] bg-white p-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_9rem_auto]" onSubmit={(event) => event.preventDefault()}>
+            <label>
+              <span className="field-label">Destination</span>
+              <select className="field" value={stayDestination} onChange={(event) => setStayDestination(event.target.value)}>
+                <option value="">Anywhere in Kenya</option>
+                {catalogue.destinations.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}
+              </select>
+            </label>
             <label>
               <span className="field-label">Area or stay</span>
-              <input className="field" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Try Shela, Manda, or Old Town" />
+              <input className="field" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Try Lamu, Diani, or Karen" />
             </label>
             <label>
               <span className="field-label">Guests</span>
@@ -545,7 +578,7 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         {loading || error ? <LoadingState error={error} onRetry={retry} /> : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {visibleProperties.slice(0, 3).map((property) => <PropertyCard currency={currency} key={property.slug} property={property} />)}
-            {visibleProperties.length === 0 &&             <p className="text-[#52615b]">We couldn’t find a stay with that combination. Try another neighborhood or a smaller guest count.</p>}
+            {visibleProperties.length === 0 &&             <p className="text-[#52615b]">We couldn’t find a stay with that combination. Try another destination or a smaller guest count.</p>}
             {visibleProperties.length > 3 &&             <a className="flex min-h-56 items-center justify-center rounded-2xl border border-dashed border-[#c8c9be] font-semibold text-[#203b35] hover:bg-white" href="/booking.html">Looking for something else? Ask our local team →</a>}
           </div>
         )}
@@ -554,10 +587,10 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
       <section className="mx-auto max-w-7xl px-5 pb-20 sm:px-8">
         <div className="overflow-hidden rounded-3xl bg-[#203b35] px-6 py-12 text-white sm:px-12 sm:py-16">
           <div className="max-w-2xl">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f1b28b]">Your island story starts here</p>
-            <h2 className="display-font mt-4 text-4xl sm:text-5xl">Let Lamu be more than a place on the map.</h2>
-            <p className="mt-4 leading-7 text-white/75">Tell us what you’re drawn to—sailing, Swahili heritage, or a slower few days by the sea—and take the first step toward your island escape.</p>
-            <ButtonLink className="mt-7" href="/booking.html">Start planning your escape</ButtonLink>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f1b28b]">Your Kenyan trip starts here</p>
+            <h2 className="display-font mt-4 text-4xl sm:text-5xl">Let Kenya be more than a place on the map.</h2>
+            <p className="mt-4 leading-7 text-white/75">Tell us what you’re drawn to—sailing, Swahili heritage, wildlife, or a slower few days in the hills—and take the first step toward your Kenyan trip.</p>
+            <ButtonLink className="mt-7" href="/booking.html">Start planning your trip</ButtonLink>
           </div>
         </div>
       </section>
@@ -566,25 +599,40 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
 }
 
 function ToursPage({ catalogue, loading, error, retry, currency }) {
+  const [destination, setDestination] = useState('');
   const [category, setCategory] = useState('');
-  const categories = [...new Set(catalogue.tours.map((tour) => tour.category || 'Island experiences'))].sort();
-  const visibleTours = catalogue.tours.filter((tour) => !category || (tour.category || 'Island experiences') === category);
+  const categories = [...new Set(catalogue.tours.map((tour) => tour.category || 'Experiences'))].sort();
+  const destinationNames = new Map(catalogue.destinations.map((item) => [item.slug, item.name]));
+  const visibleTours = catalogue.tours.filter((tour) => (
+    (!destination || tour.destination === destination)
+    && (!category || (tour.category || 'Experiences') === category)
+  ));
 
   return (
     <PageShell>
-      <PageBanner eyebrow="Find your island rhythm" title="Come for the sea. Leave with a story." description="Sail in a traditional dhow, follow the old town’s hidden details, or spend a day with the coast as your guide. Find experiences led by people who know Lamu by heart." />
+      <PageBanner eyebrow="Find your Kenya" title="Come for one place. Leave with a story from eight." description="Sail a dhow on the coast, follow old-town lanes, cycle beneath the Rift Valley cliffs, or spend a morning on safari. Every experience is led by people who know their corner of Kenya by heart." />
       <section className="mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20">
-        <SectionHeading eyebrow="Made memorable by local knowledge" title="Your next Lamu story starts here." description="Find the experience that fits your pace, explore the details, and choose from published departure times." />
+        <SectionHeading eyebrow="Made memorable by local knowledge" title="Your next Kenyan story starts here." description="Filter by destination or by the kind of day you want, then explore the details and pick a published departure time." />
         {loading || error ? <LoadingState error={error} onRetry={retry} /> : (
           <>
+          <div className="mb-4 flex flex-wrap gap-2" aria-label="Filter tours by destination">
+            <button className={`rounded-full px-4 py-2 text-sm font-semibold ${destination === '' ? 'bg-[#203b35] text-white' : 'border border-[#d9d7cd] text-[#52615b]'}`} type="button" onClick={() => setDestination('')}>All Kenya</button>
+            {catalogue.destinations.map((item) => <button className={`rounded-full px-4 py-2 text-sm font-semibold ${destination === item.slug ? 'bg-[#203b35] text-white' : 'border border-[#d9d7cd] text-[#52615b]'}`} type="button" key={item.slug} onClick={() => setDestination(item.slug)}>{item.name}</button>)}
+          </div>
           <div className="mb-7 flex flex-wrap gap-2" aria-label="Filter tours by category">
             <button className={`rounded-full px-4 py-2 text-sm font-semibold ${category === '' ? 'bg-[#203b35] text-white' : 'border border-[#d9d7cd] text-[#52615b]'}`} type="button" onClick={() => setCategory('')}>All experiences</button>
             {categories.map((item) => <button className={`rounded-full px-4 py-2 text-sm font-semibold ${category === item ? 'bg-[#203b35] text-white' : 'border border-[#d9d7cd] text-[#52615b]'}`} type="button" key={item} onClick={() => setCategory(item)}>{item}</button>)}
           </div>
+          <p className="mb-5 flex flex-wrap items-center gap-2 text-sm text-[#52615b]" role="status">
+            <span className="font-semibold text-[#203b35]">{visibleTours.length}</span>
+            <span>{visibleTours.length === 1 ? 'experience' : 'experiences'}</span>
+            {destination && <><span aria-hidden="true">·</span><span>{destinationNames.get(destination) || destination}</span></>}
+            {category && <><span aria-hidden="true">·</span><span>{category}</span></>}
+          </p>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {visibleTours.map((tour) => <TourCard currency={currency} key={tour.slug} tour={tour} />)}
             {catalogue.tours.length === 0 && <p className="text-[#52615b]">Tours are being added. Please check back soon.</p>}
-            {catalogue.tours.length > 0 && visibleTours.length === 0 && <p className="text-[#52615b]">No experiences are currently listed in this category.</p>}
+            {catalogue.tours.length > 0 && visibleTours.length === 0 && <p className="text-[#52615b]">No experiences match this destination and category yet. Try All Kenya or All experiences.</p>}
           </div>
           </>
         )}
@@ -647,8 +695,8 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
     function syncLanguage(event) {
       setLanguage(event.detail.language);
     }
-    document.addEventListener('lamu-language-changed', syncLanguage);
-    return () => document.removeEventListener('lamu-language-changed', syncLanguage);
+    document.addEventListener('kenya-language-changed', syncLanguage);
+    return () => document.removeEventListener('kenya-language-changed', syncLanguage);
   }, []);
 
   useEffect(() => {
@@ -710,7 +758,7 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
       ];
       const message = language === 'sw'
         ? [
-          'Habari Lamu Tours, tafadhali thibitisheni malazi haya kabla sijalipa:',
+          'Habari Kenya Tours, tafadhali thibitisheni malazi haya kabla sijalipa:',
           ...contactLines,
           `Malazi: ${selectedListing.name} (${selectedListing.location})`,
           `Kuingia: ${dateLabel(checkInDate)}`,
@@ -721,7 +769,7 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
           'Tafadhali thibitisheni nafasi na mtumie hatua salama za malipo ya M-Pesa.',
         ].join('\n')
         : [
-          'Hello Lamu Tours, please confirm this stay before I pay:',
+          'Hello Kenya Tours, please confirm this stay before I pay:',
           ...contactLines,
           `Stay: ${selectedListing.name} (${selectedListing.location})`,
           `Check-in: ${dateLabel(checkInDate)}`,
@@ -738,11 +786,11 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
     }
     if (travelerType === 'international') {
       const dateLabel = selectedSchedule
-        ? `${selectedSchedule.starts_at.slice(0, 10)} at ${selectedSchedule.starts_at.slice(11, 16)} Lamu time`
-        : `${data.date} at ${data.time} Lamu time`;
+        ? `${selectedSchedule.starts_at.slice(0, 10)} at ${selectedSchedule.starts_at.slice(11, 16)} Kenya time`
+        : `${data.date} at ${data.time} Kenya time`;
       const details = String(data.message || '').trim();
       const message = [
-        'Hello Lamu Tours, I am an international traveler and would like to arrange this booking:',
+        'Hello Kenya Tours, I am an international traveler and would like to arrange this booking:',
         `Name: ${data.name}`,
         `Email: ${data.email}`,
         `Country: ${data.country_of_residence}`,
@@ -782,8 +830,8 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
   return (
     <PageShell>
       <PageBanner
-        eyebrow={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Ombi la malazi' : 'Stay enquiry') : 'A few details, then the island is closer'}
-        title={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Panga kukaa kwako Lamu.' : 'Plan your stay in Lamu.') : 'Let’s bring your Lamu plans to life.'}
+        eyebrow={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Ombi la malazi' : 'Stay enquiry') : 'A few details, then Kenya is closer'}
+        title={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Panga malazi yako Kenya.' : 'Plan your stay in Kenya.') : 'Let’s bring your Kenyan plans to life.'}
         description={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Chagua tarehe zako na uombe mwenyeji athibitishe nafasi kupitia WhatsApp kabla ya malipo.' : 'Choose your dates and ask the host to confirm availability on WhatsApp before payment.') : travelerType === 'domestic' ? 'Choose an experience and available departure, then confirm your booking securely with M-Pesa.' : 'Choose an experience and departure, then contact our local team to confirm availability and arrange payment.'}
       />
       <div className="mx-auto max-w-7xl px-5 pt-10 sm:px-8 sm:pt-14">
@@ -791,11 +839,11 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
       </div>
       <section className="mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div id="booking-checkout" className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-9">
-          <h2 className="display-font text-3xl text-[#203b35]">{selectedListing?.kind === 'stay' ? 'Ask about your stay' : 'Make it a date with the coast.'}</h2>
+          <h2 className="display-font text-3xl text-[#203b35]">{selectedListing?.kind === 'stay' ? 'Ask about your stay' : 'Make it a date with Kenya.'}</h2>
           <p className="mt-2 text-sm leading-6 text-[#52615b]">{selectedListing?.kind === 'stay' ? 'Send these dates to our local team. No payment is taken until the host confirms availability.' : travelerType === 'domestic' ? 'Choose a published departure, tell us who’s coming, and approve the M-Pesa prompt sent to your Kenyan mobile number. Your booking is confirmed after payment is verified.' : 'Share your details with our local team on WhatsApp. We’ll confirm the departure and provide an international payment option.'}</p>
           {errorMessage && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{errorMessage}</p>}
           {submitError && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{submitError}</p>}
-          {stayQuoteUrl && <div className="mt-5 rounded-xl bg-[#e9eee8] p-4" role="status"><p className="text-sm text-[#203b35]">Your stay request is ready. The host will confirm dates before payment.</p><a className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={stayQuoteUrl} target="_blank" rel="noreferrer">{catalogue.whatsapp_business_phone ? 'Message Lamu Tours on WhatsApp' : 'Share enquiry in WhatsApp'}</a></div>}
+          {stayQuoteUrl && <div className="mt-5 rounded-xl bg-[#e9eee8] p-4" role="status"><p className="text-sm text-[#203b35]">Your stay request is ready. The host will confirm dates before payment.</p><a className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={stayQuoteUrl} target="_blank" rel="noreferrer">{catalogue.whatsapp_business_phone ? 'Message Kenya Tours on WhatsApp' : 'Share enquiry in WhatsApp'}</a></div>}
           {loading || error ? <div className="mt-6"><LoadingState error={error} onRetry={retry} /></div> : (
             <form className="mt-7 grid gap-x-5 gap-y-5 sm:grid-cols-2" onSubmit={submitBooking}>
               <label className="sm:col-span-2">
@@ -849,7 +897,7 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
                     </select>
                   </label>
                   <label>
-                    <span className="field-label">Departure time (Lamu time)</span>
+                    <span className="field-label">Departure time (Kenya time)</span>
                     <select className="field" value={scheduleId} onChange={(event) => setScheduleId(event.target.value)} required disabled={!daySchedules.length}>
                       <option value="">Choose a departure</option>
                       {daySchedules.map((item) => <option key={item.id} value={item.id}>{item.starts_at.slice(11, 16)} · {item.remaining} spaces left</option>)}
@@ -915,27 +963,27 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
   );
 }
 
-function AboutPage() {
+function AboutKenyaPage() {
   return (
     <PageShell>
-      <PageBanner eyebrow="A place with a story" title="An island that asks you to slow down." description="Here, the day follows the tide. Wander, listen, and let Lamu reveal itself one sunlit street and sea breeze at a time." />
+      <PageBanner eyebrow="A country with a thousand stories" title="One country. Eight very different trips." description="Kenya is a coastline of Swahili towns, a capital with a national park inside it, a rift of cliffs and lakes, and savannah beneath Kilimanjaro. Pick the corner that suits the trip you have in mind." />
       <section className="mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-2 lg:items-center">
-        <img className="h-[26rem] w-full rounded-3xl object-cover" src="/images/Lamu,_Kenya_(45275410485).jpeg" alt="Historic Lamu town beside the water" />
+        <img className="h-[26rem] w-full rounded-3xl object-cover" src="/images/Lamu,_Kenya_(45275410485).jpeg" alt="Historic Swahili town on the Kenyan coast" />
         <div>
-          <SectionHeading eyebrow="Meet Lamu" title="Where living culture meets the Indian Ocean." />
-          <p className="leading-7 text-[#52615b]">Off Kenya’s northern coast, Lamu is one of East Africa’s oldest and best-preserved Swahili settlements. Coral-stone buildings, intricately carved doors, and winding lanes hold traces of generations shaped by Indian Ocean trade and travel.</p>
-          <p className="mt-4 leading-7 text-[#52615b]">Life here moves at a gentler pace—on foot, by dhow, and along familiar neighborhood paths. Lamu Old Town was recognized as a UNESCO World Heritage Site in 2001, and its sense of place is still part of daily life.</p>
-          <ButtonLink className="mt-7" href="/tours.html">Experience Lamu with a local guide</ButtonLink>
+          <SectionHeading eyebrow="Meet Kenya" title="Coast, city, highlands, and savannah in one country." />
+          <p className="leading-7 text-[#52615b]">Kenya runs from the Indian Ocean to the Great Rift Valley and on to the foothills of Kilimanjaro. Along the way you pass centuries-old Swahili ports, coral reefs, highland farms, and grassland that holds some of the densest wildlife on earth.</p>
+          <p className="mt-4 leading-7 text-[#52615b]">We work with guides, boat crews, and hosts who live in each place, so a day out is shaped by people who know the tides, the seasons, and the roads rather than by a script.</p>
+          <ButtonLink className="mt-7" href="/tours.html">Browse experiences across Kenya</ButtonLink>
         </div>
       </section>
       <section className="bg-[#efeee7] px-5 py-14 sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
-          <SectionHeading centered eyebrow="Follow your curiosity" title="Many paths. One unforgettable island." />
+          <SectionHeading centered eyebrow="Follow your curiosity" title="Many regions. One unforgettable country." />
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
             {[
-              ['images/Lamu_Fort_Museum\'s.jpg', 'Old Town, full of stories', 'Follow the narrow lanes, pause at the museum, and look closer at the carved details of Swahili architecture.'],
-              ['images/shela-lamu-kenya-01.jpg', 'Shela, where the shore opens up', 'Take the long way along the sand, feel the sea breeze, and leave a little room in the day for doing nothing.'],
-              ['images/Lamu_Donkey_Sanctuary.jpg', 'A slower island rhythm', 'Discover the local traditions, familiar faces, and everyday moments that make Lamu feel like nowhere else.'],
+              ['images/Lamu_Fort_Museum\'s.jpg', 'The Swahili coast', 'Lamu, Mombasa, Watamu, and Diani: carved doors, dhow sails, reef gardens, and old towns that are still lived in.'],
+              ['images/shela-lamu-kenya-01.jpg', 'The islands and the reef', 'Take the long way along the sand, feel the sea breeze, and leave a little room in the day for doing nothing.'],
+              ['images/Lamu_Donkey_Sanctuary.jpg', 'A slower coastal rhythm', 'Discover the local traditions, familiar faces, and everyday moments that make the coast feel like nowhere else.'],
               ['images/fatma.png', 'Everyday life by the sea', 'Share the simple pleasures of island life: a fresh coconut, warm sand, and the Indian Ocean in the background.'],
             ].map(([image, title, description]) => (
               <article className="overflow-hidden rounded-2xl bg-white" key={title}>
@@ -949,12 +997,36 @@ function AboutPage() {
           </div>
         </div>
       </section>
+      <section className="mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20">
+        <SectionHeading eyebrow="Lamu, one of eight" title="Where living culture meets the Indian Ocean." />
+        <div className="grid gap-8 lg:grid-cols-[1.25fr_1fr] lg:items-start">
+          <div>
+            <p className="leading-7 text-[#52615b]">Off Kenya’s northern coast, Lamu is one of East Africa’s oldest and best-preserved Swahili settlements. Coral-stone buildings, intricately carved doors, and winding lanes hold traces of generations shaped by Indian Ocean trade and travel.</p>
+            <p className="mt-4 leading-7 text-[#52615b]">Life here moves at a gentler pace—on foot, by dhow, and along familiar neighborhood paths. Lamu Old Town was recognized as a UNESCO World Heritage Site in 2001, and its sense of place is still part of daily life.</p>
+            <ButtonLink className="mt-7" href="/tours.html">See Lamu experiences</ButtonLink>
+          </div>
+          <div className="rounded-2xl bg-[#e9eee8] p-6">
+            <p className="font-semibold text-[#203b35]">Where else you can book</p>
+            <p className="mt-2 text-sm leading-6 text-[#52615b]">Lamu is one of eight destinations on this site. The rest of the country is just as bookable.</p>
+            <ul className="mt-4 grid gap-2 text-sm text-[#52615b] sm:grid-cols-2 lg:grid-cols-1">
+              {['Mombasa — fort, old town, and harbour sails', 'Diani Beach — reef snorkelling and sacred forest', 'Watamu — marine park and Gede ruins', 'Nairobi — a national park inside the capital', 'Lake Naivasha — boat safaris and Hell’s Gate', 'Maasai Mara — game drives and balloon flights', 'Amboseli — elephants below Kilimanjaro'].map((item) => (
+                <li className="flex gap-2" key={item}>
+                  <span aria-hidden="true" className="text-[#b96e45]">•</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+            <ButtonLink className="mt-6" href="/tours.html">Explore all eight destinations</ButtonLink>
+          </div>
+        </div>
+      </section>
     </PageShell>
   );
 }
 
 function ContactPage() {
   const [status, setStatus] = useState({ message: '', error: false, sending: false });
+  const phone = useWhatsAppPhone();
 
   async function submitContact(event) {
     event.preventDefault();
@@ -984,21 +1056,21 @@ function ContactPage() {
 
   return (
     <PageShell>
-      <PageBanner eyebrow="A local team, one message away" title="Let’s make your Lamu plans easier." description="Wondering which experience suits your trip, or need help with a booking? Tell us what you’re looking for and our team will be glad to help." />
+      <PageBanner eyebrow="A local team, one message away" title="Let’s make your Kenyan plans easier." description="Wondering which experience suits your trip, or need help with a booking? Tell us what you’re looking for and our team will be glad to help." />
       <section className="mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[0.8fr_1.2fr]">
         <div>
           <SectionHeading eyebrow="Get in touch" title="Tell us what you have in mind." description="A tour, a place to stay, a question about your plans—we’re listening. Send a note and our team will follow up." />
           <div className="rounded-2xl bg-[#e9eee8] p-6">
-            <p className="font-semibold text-[#203b35]">Lamu Tours &amp; Booking Agency</p>
+            <p className="font-semibold text-[#203b35]">Kenya Tours &amp; Marketplace</p>
             <p className="mt-3 text-sm leading-6 text-[#52615b]">
-              Lamu Island, Kenya<br />
-              <a className="font-medium text-[#9a5534] hover:underline" href="mailto:info@lamutours.com">info@lamutours.com</a><br />
-              <a className="font-medium text-[#9a5534] hover:underline" href="mailto:cdominic.cm@gmail.com">cdominic.cm@gmail.com</a><br />
-              <a className="inline-flex items-center gap-2 font-medium text-[#9a5534] hover:underline" href="tel:+254704143718">
-                <svg aria-hidden="true" className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M6.4 3.5h2.3l1.4 3.9-1.9 1.3a11.2 11.2 0 0 0 5.1 5.1l1.3-1.9 3.9 1.4v2.3a2 2 0 0 1-2.2 2A16.6 16.6 0 0 1 4.4 5.7a2 2 0 0 1 2-2.2Z" />
-                </svg>
-                <span>Call 0704143718</span>
+              Kenya<br />
+              <a className="inline-flex items-center gap-2 font-medium text-[#9a5534] hover:underline" href={CONTACT_PHONE_HREF}>
+                <PhoneIcon />
+                <span>Call {CONTACT_PHONE_DISPLAY}</span>
+              </a><br />
+              <a className="inline-flex items-center gap-2 font-medium text-[#9a5534] hover:underline" href={whatsappUrl(WHATSAPP_GREETING, phone)} target="_blank" rel="noopener noreferrer">
+                <WhatsAppIcon />
+                <span>Message us on WhatsApp</span>
               </a>
             </p>
           </div>
@@ -1052,7 +1124,7 @@ function TourDetailPage({ catalogue, loading, error, retry, currency }) {
         <div className="mt-6 grid gap-10 lg:grid-cols-[1.15fr_0.85fr]">
           <img className="max-h-[34rem] w-full rounded-3xl object-cover" src={imageUrl(tour.image_url)} alt={tour.name} />
           <div className="py-2">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">{tour.category || 'A Lamu experience'}</p>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">{tour.category || 'A Kenya experience'}</p>
             <h1 className="display-font mt-4 text-4xl leading-tight text-[#203b35] sm:text-5xl">{tour.name}</h1>
             <p className="mt-5 leading-7 text-[#52615b]">{tour.description}</p>
             <div className="mt-7 grid grid-cols-2 gap-4 rounded-2xl bg-[#efeee7] p-5">
@@ -1114,9 +1186,9 @@ function AuthPage({ register = false }) {
     <PageShell>
       <section className="mx-auto max-w-3xl px-5 py-12 sm:px-8 sm:py-20">
         <div className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-10">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">Lamu Tours</p>
-          <h1 className="display-font mt-3 text-4xl text-[#203b35]">{register ? 'Join the island experience.' : 'Welcome back to Lamu.'}</h1>
-          <p className="mt-3 text-[#52615b]">{register ? 'Create an account to plan and manage your bookings.' : 'Sign in to continue planning your Lamu experience.'}</p>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">Kenya Tours</p>
+          <h1 className="display-font mt-3 text-4xl text-[#203b35]">{register ? 'Join the Kenya experience.' : 'Welcome back to Kenya Tours.'}</h1>
+          <p className="mt-3 text-[#52615b]">{register ? 'Create an account to plan and manage your bookings.' : 'Sign in to continue planning your Kenyan trip.'}</p>
           {error && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
           <form className="mt-7 space-y-5" action={register ? '/register' : '/login'} method="post">
             {register && <label className="block"><span className="field-label">Full name</span><input className="field" name="name" autoComplete="name" required /></label>}
@@ -1126,7 +1198,7 @@ function AuthPage({ register = false }) {
             <button className="min-h-12 w-full rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38]" type="submit">{register ? 'Create account' : 'Sign in'}</button>
           </form>
           <p className="mt-6 text-sm text-[#52615b]">
-            {register ? 'Already have an account?' : 'New to Lamu Tours?'}{' '}
+            {register ? 'Already have an account?' : 'New to Kenya Tours?'}{' '}
             <a className="font-semibold text-[#9a5534] hover:underline" href={register ? '/login.html' : '/register.html'}>{register ? 'Sign in' : 'Create an account'}</a>
           </p>
           {!register && <p className="mt-4 text-sm"><a className="font-semibold text-[#9a5534] underline" href="/my-bookings">View or manage your bookings</a></p>}
@@ -1190,7 +1262,7 @@ function ConfirmationPage() {
           <h1 className="display-font mt-6 text-4xl text-[#203b35]">{paymentIsConfirmed ? 'Your booking is confirmed.' : 'Your request is in.'}</h1>
           <p className="mt-4 leading-7 text-[#52615b]">
             {paymentIsConfirmed
-              ? 'Your M-Pesa payment has been verified. Thanks for booking with Lamu Tours.'
+              ? 'Your M-Pesa payment has been verified. Thanks for booking with Kenya Tours.'
               : paymentFailed
                 ? 'The M-Pesa payment was not completed and this booking was not confirmed. You can try booking again.'
                 : 'We’ve received your request. Check your phone for the M-Pesa prompt and enter your PIN to pay. We’ll confirm your booking after Daraja verifies the payment.'}
@@ -1334,7 +1406,7 @@ function MyBookingsPage() {
 
   return (
     <PageShell>
-      <PageBanner eyebrow="Your account" title="My account and bookings." description="View your account details and manage your Lamu experiences." />
+      <PageBanner eyebrow="Your account" title="My account and bookings." description="View your account details and manage your Kenyan experiences." />
       <section className="mx-auto max-w-5xl space-y-5 px-5 py-12 sm:px-8 sm:py-16">
         {loading && <p className="text-[#52615b]" role="status">Loading your bookings…</p>}
         {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800"><p role="alert">{error}</p><a className="mt-3 inline-block font-semibold underline" href="/login.html">Sign in as a customer</a></div>}
@@ -1360,8 +1432,8 @@ function NotFoundPage() {
     <PageShell>
       <section className="mx-auto max-w-3xl px-5 py-20 text-center sm:px-8 sm:py-28">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">404 · Page not found</p>
-        <h1 className="display-font mt-4 text-4xl text-[#203b35]">This isn’t the island path you’re looking for.</h1>
-        <p className="mt-4 text-[#52615b]">The page may have moved. Head home or browse the island tours instead.</p>
+        <h1 className="display-font mt-4 text-4xl text-[#203b35]">This isn’t the destination you’re looking for.</h1>
+        <p className="mt-4 text-[#52615b]">The page may have moved. Head home or browse the Kenya tours instead.</p>
         <div className="mt-7 flex justify-center gap-3">
           <ButtonLink href="/index.html">Go home</ButtonLink>
           <ButtonLink href="/tours.html" secondary className="border-[#203b35] bg-white text-[#203b35] hover:bg-[#203b35] hover:text-white">Browse tours</ButtonLink>
@@ -1393,7 +1465,7 @@ export default function App() {
 
     let source = campaignSource || referrerSource;
     try {
-      const sourceKey = 'lamu-first-touch-source';
+      const sourceKey = 'kenya-first-touch-source';
       const firstTouchSource = window.localStorage.getItem(sourceKey);
       if (firstTouchSource) source = firstTouchSource;
       else if (source) window.localStorage.setItem(sourceKey, source);
@@ -1492,8 +1564,8 @@ export default function App() {
       setLanguageVersion((version) => version + 1);
     }
 
-    document.addEventListener('lamu-language-changed', refreshLocalizedValues);
-    return () => document.removeEventListener('lamu-language-changed', refreshLocalizedValues);
+    document.addEventListener('kenya-language-changed', refreshLocalizedValues);
+    return () => document.removeEventListener('kenya-language-changed', refreshLocalizedValues);
   }, []);
 
   useEffect(() => {
@@ -1511,7 +1583,7 @@ export default function App() {
         }
         setCatalogue(data);
         document.documentElement.dataset.whatsappPhone = data.whatsapp_business_phone || '';
-        document.dispatchEvent(new Event('lamu-catalogue-ready'));
+        document.dispatchEvent(new Event('kenya-catalogue-ready'));
       })
       .catch((loadError) => {
         if (loadError.name !== 'AbortError') setError(getErrorMessage(loadError));
@@ -1545,26 +1617,27 @@ export default function App() {
 
   useEffect(() => {
     const titles = {
-      '/': 'Lamu Tours | Find your way to Lamu',
-      '/index.html': 'Lamu Tours | Find your way to Lamu',
-      '/tours.html': 'Island tours | Lamu Tours',
-      '/booking.html': 'Plan your Lamu escape | Lamu Tours',
-      '/about-lamu.html': 'Discover Lamu | Lamu Tours',
-      '/contact.html': 'Contact us | Lamu Tours',
-      '/login.html': 'Sign in | Lamu Tours',
-      '/register.html': 'Create an account | Lamu Tours',
-      '/tour-details.html': 'Tour details | Lamu Tours',
-      '/booking-confirmation.html': 'Booking request received | Lamu Tours',
-      '/my-bookings': 'My account | Lamu Tours',
-      '/admin/login': 'Admin sign in | Lamu Tours',
-      '/admin': 'Admin dashboard | Lamu Tours',
-      '/admin/dashboard': 'Admin dashboard | Lamu Tours',
-      '/dashboard': 'Bookings and messages | Lamu Tours',
-      '/vendor/login': 'Vendor sign in | Lamu Tours',
-      '/vendor/register': 'Vendor registration | Lamu Tours',
-      '/vendor/dashboard': 'Vendor dashboard | Lamu Tours',
+      '/': 'Kenya Tours & Marketplace | Tours and stays across Kenya',
+      '/index.html': 'Kenya Tours & Marketplace | Tours and stays across Kenya',
+      '/tours.html': 'Kenya tours and experiences | Kenya Tours & Marketplace',
+      '/booking.html': 'Plan your Kenya trip | Kenya Tours & Marketplace',
+      '/about-kenya.html': 'Discover Kenya | Kenya Tours & Marketplace',
+      '/about-lamu.html': 'Discover Kenya | Kenya Tours & Marketplace',
+      '/contact.html': 'Contact us | Kenya Tours & Marketplace',
+      '/login.html': 'Sign in | Kenya Tours & Marketplace',
+      '/register.html': 'Create an account | Kenya Tours & Marketplace',
+      '/tour-details.html': 'Tour details | Kenya Tours & Marketplace',
+      '/booking-confirmation.html': 'Booking request received | Kenya Tours & Marketplace',
+      '/my-bookings': 'My account | Kenya Tours & Marketplace',
+      '/admin/login': 'Admin sign in | Kenya Tours',
+      '/admin': 'Admin dashboard | Kenya Tours',
+      '/admin/dashboard': 'Admin dashboard | Kenya Tours',
+      '/dashboard': 'Bookings and messages | Kenya Tours',
+      '/vendor/login': 'Vendor sign in | Kenya Tours',
+      '/vendor/register': 'Vendor registration | Kenya Tours',
+      '/vendor/dashboard': 'Vendor dashboard | Kenya Tours',
     };
-    document.title = titles[pathname] || 'Lamu Tours & Booking Agency';
+    document.title = titles[pathname] || 'Kenya Tours & Marketplace';
   }, [pathname]);
 
   if (pathname === '/admin/login') return <AdminLoginPage />;
@@ -1576,7 +1649,7 @@ export default function App() {
   if (pathname === '/tours.html') return <ToursPage catalogue={catalogue} currency={currency} error={error} loading={loading} retry={retry} />;
   if (pathname === '/booking.html') return <BookingPage catalogue={catalogue} currency={currency} error={error} loading={loading} retry={retry} />;
   if (pathname === '/my-bookings') return <MyBookingsPage />;
-  if (pathname === '/about-lamu.html') return <AboutPage />;
+  if (pathname === '/about-kenya.html' || pathname === '/about-lamu.html') return <AboutKenyaPage />;
   if (pathname === '/contact.html') return <ContactPage />;
   if (pathname === '/login.html' || pathname === '/login') return <AuthPage />;
   if (pathname === '/register.html' || pathname === '/register') return <AuthPage register />;

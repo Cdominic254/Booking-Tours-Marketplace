@@ -5,7 +5,7 @@ from saas.extensions import db
 from saas.modules.bookings.models import Booking
 from saas.modules.catalog.models import Property, Tour, TourSchedule
 
-LAMU_TIMEZONE = ZoneInfo('Africa/Nairobi')
+KENYA_TIMEZONE = ZoneInfo('Africa/Nairobi')
 
 
 def parse_local_datetime(value):
@@ -14,7 +14,7 @@ def parse_local_datetime(value):
     except ValueError as exc:
         raise ValueError('Choose a valid date and time.') from exc
     if parsed.tzinfo:
-        parsed = parsed.astimezone(LAMU_TIMEZONE).replace(tzinfo=None)
+        parsed = parsed.astimezone(KENYA_TIMEZONE).replace(tzinfo=None)
     return parsed
 
 
@@ -22,7 +22,7 @@ def reserve_schedule(schedule_id, guests):
     result = db.session.query(TourSchedule).filter(
         TourSchedule.id == schedule_id,
         TourSchedule.is_active.is_(True),
-        TourSchedule.starts_at > datetime.now(LAMU_TIMEZONE).replace(tzinfo=None),
+        TourSchedule.starts_at > datetime.now(KENYA_TIMEZONE).replace(tzinfo=None),
         TourSchedule.booked_count + guests <= TourSchedule.capacity,
     ).update(
         {TourSchedule.booked_count: TourSchedule.booked_count + guests},

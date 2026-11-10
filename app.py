@@ -41,7 +41,7 @@ from saas.modules.bookings.daraja import (
 )
 from saas.modules.bookings.settings import AdminSetting
 from saas.modules.bookings.service import (
-    LAMU_TIMEZONE,
+    KENYA_TIMEZONE,
     calculate_booking_price as calculate_booking_price_service,
     parse_local_datetime,
     release_schedule,
@@ -279,6 +279,7 @@ def ensure_catalog_columns():
             'amenities': "TEXT NOT NULL DEFAULT ''",
             'latitude': 'FLOAT',
             'longitude': 'FLOAT',
+            'destination': "VARCHAR(120) NOT NULL DEFAULT 'lamu'",
         }.items():
             if column not in table_columns.get('property', set()):
                 connection.execute(text(f'ALTER TABLE property ADD COLUMN {column} {declaration}'))
@@ -293,13 +294,14 @@ def ensure_catalog_columns():
                 connection.execute(text(f'ALTER TABLE destination ADD COLUMN {column} {declaration}'))
         tour_columns = table_columns.get('tour', set())
         for column, declaration in {
-            'category': "VARCHAR(100) NOT NULL DEFAULT 'Island experiences'",
+            'category': "VARCHAR(100) NOT NULL DEFAULT 'Experiences'",
             'itinerary': "TEXT NOT NULL DEFAULT ''",
             'inclusions': "TEXT NOT NULL DEFAULT ''",
             'exclusions': "TEXT NOT NULL DEFAULT ''",
-            'pickup_point': "VARCHAR(200) NOT NULL DEFAULT 'Lamu Town waterfront'",
+            'pickup_point': "VARCHAR(200) NOT NULL DEFAULT 'Confirm with your operator'",
             'min_group_size': 'INTEGER NOT NULL DEFAULT 1',
             'max_group_size': 'INTEGER NOT NULL DEFAULT 12',
+            'destination': "VARCHAR(120) NOT NULL DEFAULT 'lamu'",
         }.items():
             if column not in tour_columns:
                 connection.execute(text(f'ALTER TABLE tour ADD COLUMN {column} {declaration}'))
@@ -317,26 +319,75 @@ def ensure_catalog_columns():
     categories = {
         'dhow': 'Dhow & Island Hopping',
         'sandbank': 'Dhow & Island Hopping',
-        'old-town': 'Lamu Old Town Walk',
-        'cultural': 'Lamu Old Town Walk',
-        'day-trips': 'Island Day Trips',
+        'day-trips': 'Dhow & Island Hopping',
+        'old-town': 'Heritage & Culture',
+        'cultural': 'Heritage & Culture',
+        'fort-jesus-walk': 'Heritage & Culture',
+        'kaya-kinondo-walk': 'Heritage & Culture',
+        'gede-ruins': 'Heritage & Culture',
+        'nairobi-city-heritage': 'Heritage & Culture',
+        'fishing': 'Water & Marine',
+        'water-sports': 'Water & Marine',
+        'mombasa-dhow-sunset': 'Water & Marine',
+        'diani-snorkel': 'Water & Marine',
+        'watamu-marine-park': 'Water & Marine',
+        'naivasha-boat-safari': 'Water & Marine',
+        'nairobi-national-park': 'Wildlife Safari',
+        'giraffe-centre': 'Wildlife Safari',
+        'mara-game-drive': 'Wildlife Safari',
+        'mara-balloon': 'Wildlife Safari',
+        'amboseli-safari': 'Wildlife Safari',
+        'amboseli-sunset': 'Wildlife Safari',
+        'hells-gate-cycle': 'Adventure & Nature',
+    }
+    # Categories that were applied automatically by older seeds. Only these are
+    # migrated, so a category edited by a vendor is never overwritten.
+    legacy_categories = {
+        'Island experiences',
+        'Experiences',
+        'Lamu Old Town Walk',
+        'Island Day Trips',
+        'Dhow & Island Hopping',
     }
     for slug, category in categories.items():
         tour = db.session.get(Tour, slug)
-        if tour and tour.category == 'Island experiences':
+        if tour and tour.category != category and tour.category in legacy_categories:
             tour.category = category
     if db.session.new or db.session.dirty:
         db.session.commit()
 
 
 DEFAULT_TOURS = (
-    ('dhow', 'Dhow Trips', "Enjoy traditional dhow sailing around Lamu's coastline with snorkeling and island stops.", 'Half day', 8500, 'images/shela-lamu-kenya-09.jpg'),
-    ('old-town', 'Old Town Walks', 'Explore the historic streets, architecture, and marketplaces of Lamu Old Town.', '3 hours', 3500, "images/Lamu_Fort_Museum's.jpg"),
-    ('sandbank', 'Sandbank Picnics', 'Relax on a private sandbank with picnic lunch, swimming, and beach activities.', 'Half day', 7000, 'images/shela-village.webp'),
-    ('fishing', 'Fishing Trips', 'Go deep-sea fishing with local crew and enjoy fresh catch barbecue.', 'Full day', 12000, 'images/Lamu_coast.jpg'),
-    ('water-sports', 'Water Sports', 'Experience adrenaline with jet skiing, windsurfing, and paddleboarding in clear waters.', 'Half day', 9500, 'images/Spiritedpursuit_leelitumbe-106_lamu_kenya.webp'),
-    ('day-trips', 'Day Trips', 'Explore nearby islands and coastal attractions on a full-day guided excursion.', 'Full day', 9000, 'images/Spiritedpursuit_leelitumbe-49_lamu_kenya.webp'),
-    ('cultural', 'Cultural Tours', 'Visit museums, traditional workshops, and attend local cultural performances.', '4 hours', 4000, 'images/Riadha_Mosque_in_Lamu.jpg'),
+    # Lamu
+    ('dhow', 'Dhow Trips', "Enjoy traditional dhow sailing around Lamu's coastline with snorkeling and island stops.", 'Half day', 8500, 'images/shela-lamu-kenya-09.jpg', 'lamu', 'Dhow & Island Hopping'),
+    ('old-town', 'Old Town Walks', 'Explore the historic streets, architecture, and marketplaces of Lamu Old Town.', '3 hours', 3500, "images/Lamu_Fort_Museum's.jpg", 'lamu', 'Heritage & Culture'),
+    ('sandbank', 'Sandbank Picnics', 'Relax on a private sandbank with picnic lunch, swimming, and beach activities.', 'Half day', 7000, 'images/shela-village.webp', 'lamu', 'Dhow & Island Hopping'),
+    ('fishing', 'Fishing Trips', 'Go deep-sea fishing with local crew and enjoy fresh catch barbecue.', 'Full day', 12000, 'images/Lamu_coast.jpg', 'lamu', 'Water & Marine'),
+    ('water-sports', 'Water Sports', 'Experience adrenaline with jet skiing, windsurfing, and paddleboarding in clear waters.', 'Half day', 9500, 'images/Spiritedpursuit_leelitumbe-106_lamu_kenya.webp', 'lamu', 'Water & Marine'),
+    ('day-trips', 'Day Trips', 'Explore nearby islands and coastal attractions on a full-day guided excursion.', 'Full day', 9000, 'images/Spiritedpursuit_leelitumbe-49_lamu_kenya.webp', 'lamu', 'Dhow & Island Hopping'),
+    ('cultural', 'Cultural Tours', 'Visit museums, traditional workshops, and attend local cultural performances.', '4 hours', 4000, 'images/Riadha_Mosque_in_Lamu.jpg', 'lamu', 'Heritage & Culture'),
+    # Mombasa
+    ('fort-jesus-walk', 'Fort Jesus & Old Town Walk', 'Walk the Portuguese fort and Mombasa Swahili old town with a local guide.', '3 hours', 3500, 'pictures/292080828.jpg', 'mombasa', 'Heritage & Culture'),
+    ('mombasa-dhow-sunset', 'Sunset Dhow Cruise', 'Sail the Mombasa channel at golden hour aboard a traditional dhow.', '2 hours', 4500, 'pictures/295463285.jpg', 'mombasa', 'Water & Marine'),
+    # Diani
+    ('diani-snorkel', 'Diani Reef Snorkelling', 'Snorkel the reef off Diani and swim among tropical fish and coral gardens.', 'Half day', 6500, 'pictures/460469483.jpg', 'diani', 'Water & Marine'),
+    ('kaya-kinondo-walk', 'Kaya Kinondo Forest Walk', 'A guided walk through a sacred coastal forest led by a local elder.', '3 hours', 3000, 'pictures/498623923.jpg', 'diani', 'Heritage & Culture'),
+    # Watamu
+    ('watamu-marine-park', 'Marine Park Snorkelling', 'Explore coral gardens in one of Kenya’s longest-protected marine areas.', 'Half day', 7000, 'pictures/498623932.jpg', 'watamu', 'Water & Marine'),
+    ('gede-ruins', 'Gede Ruins & Mida Creek', 'Wander the medieval Swahili ruins, then glide through the Mida Creek mangroves.', '4 hours', 4000, 'pictures/498623941.jpg', 'watamu', 'Heritage & Culture'),
+    # Nairobi
+    ('nairobi-national-park', 'Nairobi National Park Safari', 'Game drive against the skyline in the only national park inside a capital city.', 'Half day', 11000, 'pictures/772777099.jpg', 'nairobi', 'Wildlife Safari'),
+    ('nairobi-city-heritage', 'Nairobi City Heritage Walk', 'From the railway museum to the old town squares with a city guide.', '3 hours', 3000, 'pictures/772777142.jpg', 'nairobi', 'Heritage & Culture'),
+    ('giraffe-centre', 'Giraffe Centre & Karen', 'Meet endangered Rothschild giraffes and visit the Karen heritage farmhouse.', '4 hours', 5500, 'pictures/772777203.jpg', 'nairobi', 'Wildlife Safari'),
+    # Lake Naivasha
+    ('naivasha-boat-safari', 'Lake Naivasha Boat Safari', 'Glide past hippos and fish eagles on a guided boat safari.', '2 hours', 5000, 'pictures/882985623.jpg', 'naivasha', 'Water & Marine'),
+    ('hells-gate-cycle', "Hell's Gate Cycling Day", 'Cycle between cliffs, gorges and geothermal springs on a full-day ride.', 'Full day', 8000, 'pictures/873059687.jpg', 'naivasha', 'Adventure & Nature'),
+    # Maasai Mara
+    ('mara-game-drive', 'Mara Full-Day Game Drive', 'Track big cats across the Mara plains with a resident guide.', 'Full day', 18000, 'pictures/295463166.jpg', 'maasai-mara', 'Wildlife Safari'),
+    ('mara-balloon', 'Mara Sunrise Balloon Safari', 'Drift over the plains at dawn and land for a bush breakfast.', 'Half day', 45000, 'pictures/295463173.jpg', 'maasai-mara', 'Wildlife Safari'),
+    # Amboseli
+    ('amboseli-safari', 'Amboseli Elephant Safari', 'Spend a day with the elephant herds that gather below Kilimanjaro.', 'Full day', 16500, 'pictures/337169041.jpg', 'amboseli', 'Wildlife Safari'),
+    ('amboseli-sunset', 'Amboseli Sunset Game Drive', 'An evening drive to the viewpoints facing the mountain.', '3 hours', 9000, 'pictures/354456403.jpg', 'amboseli', 'Wildlife Safari'),
 )
 
 DEFAULT_TOUR_DETAILS = {
@@ -382,6 +433,96 @@ DEFAULT_TOUR_DETAILS = {
         'exclusions': 'Private transport (the tour is on foot)\nDrinking water (bring your own unless confirmed by the operator)\nEntry fees, meals and personal purchases',
         'pickup_point': 'Lamu Old Town waterfront',
     },
+    'fort-jesus-walk': {
+        'itinerary': '09:00–09:15 | Meet your guide at Fort Jesus; Highlights: route and safety briefing\n09:15–10:45 | Explore the fort and its museum; Highlights: Portuguese and Swahili history\n10:45–11:45 | Walk the old town lanes and market streets; Highlights: carved doors and spice stalls\n11:45–12:00 | Return to the meeting point; Highlights: local recommendations',
+        'inclusions': 'Local walking guide\nFort Jesus entry arrangement\nGuided old town route',
+        'exclusions': 'Private transport\nDrinks and meals\nPersonal purchases',
+        'pickup_point': 'Fort Jesus main gate',
+    },
+    'mombasa-dhow-sunset': {
+        'itinerary': '16:30–16:45 | Meet the crew at the old port; Highlights: safety briefing and boarding\n16:45–18:15 | Sail the channel at golden hour; Highlights: harbour views and city skyline\n18:15–18:30 | Return to the jetty; Highlights: sunset photos',
+        'inclusions': 'Dhow cruise with local crew\nSafety equipment',
+        'exclusions': 'Hotel transfers\nDrinks and snacks\nGratuities',
+        'pickup_point': 'Mombasa old port',
+    },
+    'diani-snorkel': {
+        'itinerary': '08:30–09:00 | Meet at the dive centre; Highlights: equipment fitting and briefing\n09:00–10:00 | Boat ride to the reef; Highlights: coastline views\n10:00–12:00 | Snorkel the coral gardens; Highlights: reef fish and coral\n12:00–12:30 | Return to shore; Highlights: rinse and debrief',
+        'inclusions': 'Boat transfer to the reef\nSnorkelling equipment\nMarine guide',
+        'exclusions': 'Marine park fees\nMeals and drinks\nUnderwater camera hire',
+        'pickup_point': 'Diani dive centre',
+    },
+    'kaya-kinondo-walk': {
+        'itinerary': '09:00–09:15 | Meet your guide at the forest gate; Highlights: cultural protocol briefing\n09:15–10:30 | Walk the sacred forest trails; Highlights: old-growth trees and local stories\n10:30–11:00 | Talk with the community guide; Highlights: Digo traditions\n11:00–11:15 | Return to the gate',
+        'inclusions': 'Local community guide\nForest entry arrangement',
+        'exclusions': 'Transport to the forest\nDrinks\nPersonal purchases',
+        'pickup_point': 'Kaya Kinondo forest gate',
+    },
+    'watamu-marine-park': {
+        'itinerary': '08:30–09:00 | Meet at the beach launch point; Highlights: safety briefing\n09:00–10:00 | Boat out to the coral gardens; Highlights: reef views\n10:00–11:30 | Snorkel the marine park; Highlights: turtles and reef fish\n11:30–12:00 | Return to shore',
+        'inclusions': 'Boat transfer\nSnorkelling equipment\nMarine guide',
+        'exclusions': 'Marine park entry fees\nMeals and drinks\nEquipment hire beyond snorkelling',
+        'pickup_point': 'Watamu beach launch point',
+    },
+    'gede-ruins': {
+        'itinerary': '09:00–09:20 | Meet your guide at the Gede gate; Highlights: site briefing\n09:20–10:40 | Explore the Swahili ruins; Highlights: mosques, tombs and wells\n10:40–11:30 | Drive to Mida Creek; Highlights: mangrove boardwalk\n11:30–12:30 | Creek walk and birdwatching; Highlights: waders and kingfishers\n12:30–13:00 | Return to Gede',
+        'inclusions': 'Local guide\nRuins entry arrangement\nMida Creek boardwalk',
+        'exclusions': 'Drinks and meals\nPersonal purchases\nGratuities',
+        'pickup_point': 'Gede ruins entrance',
+    },
+    'nairobi-national-park': {
+        'itinerary': '06:00–06:15 | Hotel pickup within the city; Highlights: briefing\n06:15–09:30 | Game drive in the park; Highlights: rhino, lion and skyline views\n09:30–10:30 | Picnic stop at a viewpoint; Highlights: photography\n10:30–11:30 | Return drive to your hotel',
+        'inclusions': 'Game drive vehicle and guide\nPark entry arrangement\nBottled water',
+        'exclusions': 'Breakfast\nPersonal insurance\nGratuities',
+        'pickup_point': 'Your Nairobi hotel',
+    },
+    'nairobi-city-heritage': {
+        'itinerary': '09:00–09:15 | Meet your guide at the railway museum; Highlights: city history briefing\n09:15–10:30 | Railway museum and city squares; Highlights: colonial-era landmarks\n10:30–11:30 | Old town markets and coffee stops; Highlights: everyday city life\n11:30–12:00 | Return to the meeting point',
+        'inclusions': 'City guide\nMuseum entry arrangement',
+        'exclusions': 'Transport\nFood and drinks\nPersonal purchases',
+        'pickup_point': 'Nairobi Railway Museum',
+    },
+    'giraffe-centre': {
+        'itinerary': '09:00–09:20 | Meet your guide in Karen; Highlights: route briefing\n09:20–10:30 | Visit the giraffe centre; Highlights: feeding platform and conservation talk\n10:30–11:40 | Karen heritage farmhouse visit; Highlights: house museum and gardens\n11:40–12:00 | Return to the meeting point',
+        'inclusions': 'Local guide\nGiraffe centre entry arrangement\nFarmhouse museum entry arrangement',
+        'exclusions': 'Transport\nFood and drinks\nPersonal purchases',
+        'pickup_point': 'Karen, Nairobi',
+    },
+    'naivasha-boat-safari': {
+        'itinerary': '08:30–08:45 | Meet at the jetty; Highlights: safety briefing\n08:45–10:15 | Boat safari on the lake; Highlights: hippos, fish eagles and acacia shores\n10:15–10:30 | Return to the jetty',
+        'inclusions': 'Boat and skipper\nLife jackets\nGuide',
+        'exclusions': 'Park or conservancy fees\nDrinks and snacks\nTransport to the jetty',
+        'pickup_point': 'Naivasha jetty',
+    },
+    'hells-gate-cycle': {
+        'itinerary': '08:30–09:00 | Meet at the park gate; Highlights: bike fitting and briefing\n09:00–11:30 | Cycle through the park; Highlights: cliffs, gorges and wildlife\n11:30–12:30 | Thermal spa stop; Highlights: geothermal springs\n12:30–13:00 | Return bikes at the gate',
+        'inclusions': 'Mountain bike hire\nLocal guide\nHelmet',
+        'exclusions': 'Park entry fees\nMeals and drinks\nSpa entry',
+        'pickup_point': "Hell's Gate park gate",
+    },
+    'mara-game-drive': {
+        'itinerary': '06:00–06:15 | Meet your guide at camp; Highlights: day plan briefing\n06:15–09:00 | Morning game drive; Highlights: big cats and plains game\n09:00–10:00 | Bush breakfast stop; Highlights: open savannah views\n10:00–13:00 | Continue the drive; Highlights: river crossings and birdlife\n13:00–17:00 | Afternoon drive and return; Highlights: golden-hour photography',
+        'inclusions': 'Game drive vehicle and guide\nBush breakfast\nBottled water',
+        'exclusions': 'Park conservancy fees\nDrinks\nGratuities',
+        'pickup_point': 'Your Mara camp',
+    },
+    'mara-balloon': {
+        'itinerary': '05:15–05:45 | Transfer to the launch site; Highlights: safety briefing\n05:45–07:00 | Sunrise balloon flight; Highlights: plains and wildlife from above\n07:00–08:30 | Bush breakfast on landing; Highlights: champagne breakfast\n08:30–09:00 | Game drive back to camp',
+        'inclusions': 'Balloon flight with pilot\nBush breakfast\nTransfer to the launch site',
+        'exclusions': 'Park conservancy fees\nDrinks beyond breakfast\nGratuities',
+        'pickup_point': 'Your Mara camp',
+    },
+    'amboseli-safari': {
+        'itinerary': '06:00–06:15 | Meet at your lodge; Highlights: briefing\n06:15–09:30 | Morning game drive; Highlights: elephant herds and mountain views\n09:30–13:00 | Continue with a picnic stop; Highlights: swamp and plains wildlife\n13:00–16:00 | Afternoon drive back; Highlights: photography stops',
+        'inclusions': 'Game drive vehicle and guide\nPicnic lunch\nBottled water',
+        'exclusions': 'Park entry fees\nDrinks\nGratuities',
+        'pickup_point': 'Your Amboseli lodge',
+    },
+    'amboseli-sunset': {
+        'itinerary': '15:30–15:45 | Meet your guide; Highlights: sunset viewpoint briefing\n15:45–18:00 | Evening game drive; Highlights: elephants and mountain backdrop\n18:00–18:30 | Sunset viewpoint; Highlights: golden-hour photography\n18:30–19:00 | Return to your lodge',
+        'inclusions': 'Game drive vehicle and guide\nBottled water',
+        'exclusions': 'Park entry fees\nDrinks and dinner\nGratuities',
+        'pickup_point': 'Your Amboseli lodge',
+    },
 }
 
 LEGACY_DEFAULT_ITINERARIES = {
@@ -392,25 +533,82 @@ LEGACY_DEFAULT_ITINERARIES = {
     'water-sports': 'Meet the activity team\nChoose from available water activities\nReturn to the launch point',
     'day-trips': 'Meet your local guide\nExplore a nearby island or coastal destination\nReturn to Lamu',
     'cultural': 'Meet your local guide\nVisit cultural landmarks and local workshops\nReturn to the meeting point',
+    'fort-jesus-walk': 'Meet your guide at Fort Jesus\nWalk the old town and market streets\nReturn to the meeting point',
+    'mombasa-dhow-sunset': 'Meet the crew at the old port\nSail the channel at sunset\nReturn to the jetty',
+    'diani-snorkel': 'Meet at the dive centre\nSnorkel the reef by boat\nReturn to shore',
+    'kaya-kinondo-walk': 'Meet your community guide\nWalk the sacred forest trails\nReturn to the gate',
+    'watamu-marine-park': 'Meet at the beach launch point\nSnorkel the marine park\nReturn to shore',
+    'gede-ruins': 'Meet your guide at the ruins\nExplore Gede and Mida Creek\nReturn to the meeting point',
+    'nairobi-national-park': 'Meet your guide\nGame drive in the national park\nReturn to your hotel',
+    'nairobi-city-heritage': 'Meet your city guide\nWalk the heritage route\nReturn to the meeting point',
+    'giraffe-centre': 'Meet your guide in Karen\nVisit the giraffe centre and farmhouse\nReturn to the meeting point',
+    'naivasha-boat-safari': 'Meet at the jetty\nBoat safari on the lake\nReturn to the jetty',
+    'hells-gate-cycle': 'Meet at the park gate\nCycle the park trails\nReturn bikes at the gate',
+    'mara-game-drive': 'Meet your guide at camp\nGame drive across the plains\nReturn to camp',
+    'mara-balloon': 'Transfer to the launch site\nSunrise balloon flight and breakfast\nReturn to camp',
+    'amboseli-safari': 'Meet your guide at the lodge\nGame drive in the park\nReturn to your lodge',
+    'amboseli-sunset': 'Meet your guide\nEvening game drive to the viewpoints\nReturn to your lodge',
 }
 
 DEFAULT_PROPERTIES = (
-    ('shela-guest-house', 'Shela Village Guest House', 'guest house', 'Shela', 4500, 2, 'images/shela-village.webp', 'Comfortable guest house in Shela village.'),
-    ('old-town-hotel', 'Old Town Swahili Hotel', 'hotel', 'Lamu Old Town', 6500, 3, "images/Lamu_Fort_Museum's.jpg", 'A Swahili hotel close to the history and culture of Lamu Old Town.'),
-    ('manda-beach-home', 'Manda Island Beach Home', 'home', 'Manda Island', 10000, 5, 'images/Lamu_coast.jpg', 'An island home with spacious ocean views.'),
-    ('shela-palm-villa', 'Shela Palm Villa', 'villa', 'Shela', 12500, 4, 'pictures/187747945.jpg', 'A private villa close to Shela beach.'),
-    ('mjini-budget-hotel', 'Lamu Mjini Budget Hotel', 'hotel', 'Lamu Mjini', 5500, 2, 'pictures/292079957.jpg', 'An affordable hotel in Lamu Mjini.'),
-    ('kipungani-guest-house', 'Kipungani Coast Guest House', 'guest house', 'Kipungani', 5000, 3, 'pictures/611137747.jpg', 'A quiet guest house along the Kipungani coast.'),
-    ('manda-ocean-villa', 'Manda Ocean Villa', 'villa', 'Manda Island', 16000, 6, 'pictures/552000169.jpg', 'A private ocean villa on Manda Island.'),
+    # Lamu
+    ('shela-guest-house', 'Shela Village Guest House', 'guest house', 'Shela, Lamu', 4500, 2, 'images/shela-village.webp', 'Comfortable guest house in Shela village.', 'lamu'),
+    ('old-town-hotel', 'Old Town Swahili Hotel', 'hotel', 'Lamu Old Town', 6500, 3, "images/Lamu_Fort_Museum's.jpg", 'A Swahili hotel close to the history and culture of Lamu Old Town.', 'lamu'),
+    ('manda-beach-home', 'Manda Island Beach Home', 'home', 'Manda Island, Lamu', 10000, 5, 'images/Lamu_coast.jpg', 'An island home with spacious ocean views.', 'lamu'),
+    ('shela-palm-villa', 'Shela Palm Villa', 'villa', 'Shela, Lamu', 12500, 4, 'pictures/187747945.jpg', 'A private villa close to Shela beach.', 'lamu'),
+    ('mjini-budget-hotel', 'Mjini Budget Hotel', 'hotel', 'Lamu Mjini', 5500, 2, 'pictures/292079957.jpg', 'An affordable hotel in the heart of Lamu town.', 'lamu'),
+    ('kipungani-guest-house', 'Kipungani Coast Guest House', 'guest house', 'Kipungani, Lamu', 5000, 3, 'pictures/611137747.jpg', 'A quiet guest house along the Kipungani coast.', 'lamu'),
+    ('manda-ocean-villa', 'Manda Ocean Villa', 'villa', 'Manda Island, Lamu', 16000, 6, 'pictures/552000169.jpg', 'A private ocean villa on Manda Island.', 'lamu'),
+    # Mombasa
+    ('nyali-beach-hotel', 'Nyali Beach Hotel', 'hotel', 'Nyali, Mombasa', 9500, 2, 'pictures/292080012.jpg', 'Ocean-view rooms minutes from the reef and the city centre.', 'mombasa'),
+    ('mombasa-old-town-house', 'Old Town Swahili House', 'guest house', 'Mombasa Old Town', 5200, 2, 'pictures/292079967.jpg', 'A restored Swahili house a short walk from Fort Jesus.', 'mombasa'),
+    # Diani
+    ('diani-sands-villa', 'Diani Sands Villa', 'villa', 'Diani Beach', 15000, 6, 'pictures/497804782.jpg', 'A private villa a few steps from the white sand.', 'diani'),
+    ('diani-garden-home', 'Diani Garden Home', 'home', 'Diani Beach', 7800, 4, 'pictures/464889964.jpg', 'A garden home with a shaded veranda near the beach path.', 'diani'),
+    # Watamu
+    ('watamu-bay-hotel', 'Watamu Bay Hotel', 'hotel', 'Watamu', 8800, 2, 'pictures/498623900.jpg', 'A bay-front hotel with easy access to the marine park.', 'watamu'),
+    ('mida-creek-home', 'Mida Creek Home', 'home', 'Mida Creek, Watamu', 9900, 5, 'pictures/498623923.jpg', 'A quiet home overlooking the mangroves of Mida Creek.', 'watamu'),
+    # Nairobi
+    ('westlands-city-hotel', 'Westlands City Hotel', 'hotel', 'Westlands, Nairobi', 11500, 2, 'pictures/772777040.jpg', 'A central hotel close to restaurants and business districts.', 'nairobi'),
+    ('karen-garden-villa', 'Karen Garden Villa', 'villa', 'Karen, Nairobi', 18500, 6, 'pictures/772777142.jpg', 'A leafy villa with a private garden on the city edge.', 'nairobi'),
+    # Lake Naivasha
+    ('naivasha-lake-lodge', 'Lake Naivasha Lodge', 'guest house', 'Lake Naivasha', 7400, 3, 'pictures/882985623.jpg', 'A lakeside lodge with acacia views and abundant birdlife.', 'naivasha'),
+    # Maasai Mara
+    ('mara-savannah-camp', 'Mara Savannah Camp', 'home', 'Maasai Mara', 22000, 2, 'pictures/295463166.jpg', 'A tented camp on the edge of the open plains.', 'maasai-mara'),
+    ('mara-river-lodge', 'Mara River Lodge', 'hotel', 'Maasai Mara', 26500, 4, 'pictures/295463173.jpg', 'A river-front lodge with guiding included.', 'maasai-mara'),
+    # Amboseli
+    ('amboseli-view-lodge', 'Amboseli View Lodge', 'hotel', 'Amboseli', 17500, 3, 'pictures/337169041.jpg', 'Rooms facing the mountain and the elephant corridors.', 'amboseli'),
 )
 
 DEFAULT_DESTINATIONS = (
-    ('shela', 'Shela', 'Beach apartments and peaceful villas.', 'pictures/187747945.jpg', 'Shela'),
-    ('lamu-old-town', 'Lamu Old Town', 'Swahili stays close to history and culture.', "pictures/292079957.jpg", 'Old Town'),
-    ('manda-island', 'Manda Island', 'Ocean homes and spacious private villas.', 'pictures/552000169.jpg', 'Manda'),
-    ('kipungani', 'Kipungani', 'Quiet guest houses along the coast.', 'pictures/611137747.jpg', 'Kipungani'),
-    ('lamu-mjini', 'Lamu Mjini', 'Affordable city stays and apartments.', 'pictures/460469483.jpg', 'Mjini'),
-    ('lamu-coast', 'Lamu Coast', 'Waterfront escapes for every kind of traveler.', 'pictures/187168867.jpg', 'Lamu'),
+    ('lamu', 'Lamu', 'Car-free Swahili streets, dhow sails and quiet island beaches.', 'images/shela-lamu-kenya-09.jpg', 'Lamu'),
+    ('mombasa', 'Mombasa', 'Fort Jesus, spice markets and a lively Indian Ocean port city.', 'pictures/292080012.jpg', 'Mombasa'),
+    ('diani', 'Diani Beach', 'Powder-white sand, reef snorkelling and relaxed beach stays.', 'pictures/497804782.jpg', 'Diani'),
+    ('watamu', 'Watamu', 'Marine park reefs, turtle beaches and the Gede ruins.', 'pictures/498623900.jpg', 'Watamu'),
+    ('nairobi', 'Nairobi', 'A capital where wildlife parks meet museums and coffee culture.', 'pictures/772777040.jpg', 'Nairobi'),
+    ('naivasha', 'Lake Naivasha', 'Boat safaris, hippo shores and the cliffs of Hell’s Gate.', 'pictures/882985623.jpg', 'Naivasha'),
+    ('maasai-mara', 'Maasai Mara', 'Big-cat plains and the great migration on open savannah.', 'pictures/295463166.jpg', 'Mara'),
+    ('amboseli', 'Amboseli', 'Elephant herds beneath the snows of Kilimanjaro.', 'pictures/337169041.jpg', 'Amboseli'),
+)
+
+# Placeholder pickup points written by older seeds; matched so they can be
+# upgraded to the operator-specific value in DEFAULT_TOUR_DETAILS.
+LEGACY_PICKUP_POINTS = ('Lamu Town waterfront', 'Confirm with your operator')
+# Owner name written by older seeds; upgraded to DEFAULT_OWNER_NAME.
+LEGACY_OWNER_NAMES = ('Lamu Tours',)
+DEFAULT_OWNER_NAME = 'Kenya Tours'
+DEFAULT_OWNER_EMAIL = 'admin@lamutours.com'
+
+# Neighbourhood-level rows from the earlier Lamu-only seed. They are replaced by
+# the country-wide destinations above; Destination.slug is not referenced by any
+# foreign key, so removing the rows cannot orphan a listing.
+RETIRED_DESTINATION_SLUGS = (
+    'shela',
+    'lamu-old-town',
+    'manda-island',
+    'kipungani',
+    'lamu-mjini',
+    'lamu-coast',
 )
 
 
@@ -429,35 +627,68 @@ def unique_slug(value, model, current_id=None):
 
 
 def seed_catalogue():
-    for slug, name, description, duration, price, image_url in DEFAULT_TOURS:
+    # Track work explicitly: the loops below issue queries, which autoflush
+    # pending inserts. A `db.session.new` check after that point would look
+    # empty and silently skip the commit, rolling the whole seed back.
+    changed = False
+    for slug, name, description, duration, price, image_url, destination, category in DEFAULT_TOURS:
         tour = db.session.get(Tour, slug)
         if not tour:
-            tour = Tour(slug=slug, name=name, description=description, duration=duration, price=price, image_url=image_url)
+            tour = Tour(
+                slug=slug,
+                name=name,
+                description=description,
+                duration=duration,
+                price=price,
+                image_url=image_url,
+                destination=destination,
+                category=category,
+            )
             db.session.add(tour)
+            changed = True
+        elif not tour.destination:
+            tour.destination = destination
+            changed = True
         defaults = DEFAULT_TOUR_DETAILS[slug]
         if not tour.itinerary or tour.itinerary == LEGACY_DEFAULT_ITINERARIES[slug]:
             tour.itinerary = defaults['itinerary']
+            changed = True
         if not tour.inclusions:
             tour.inclusions = defaults['inclusions']
+            changed = True
         if not tour.exclusions:
             tour.exclusions = defaults['exclusions']
-        if tour.pickup_point == 'Lamu Town waterfront':
+            changed = True
+        if tour.pickup_point in LEGACY_PICKUP_POINTS:
             tour.pickup_point = defaults['pickup_point']
+            changed = True
 
-    for slug, name, property_type, location, price, guests, image_url, description in DEFAULT_PROPERTIES:
-        if not Property.query.filter_by(slug=slug).first():
+    for slug, name, property_type, location, price, guests, image_url, description, destination in DEFAULT_PROPERTIES:
+        listing = Property.query.filter_by(slug=slug).first()
+        if not listing:
             db.session.add(Property(
                 slug=slug,
-                owner_name='Lamu Tours',
-                owner_email='admin@lamutours.com',
+                owner_name=DEFAULT_OWNER_NAME,
+                owner_email=DEFAULT_OWNER_EMAIL,
                 name=name,
                 property_type=property_type,
                 location=location,
+                destination=destination,
                 price_per_night=price,
                 guests=guests,
                 image_url=image_url,
                 description=description,
             ))
+            changed = True
+        else:
+            if not listing.destination:
+                listing.destination = destination
+                changed = True
+            if listing.owner_name in LEGACY_OWNER_NAMES and listing.owner_email == DEFAULT_OWNER_EMAIL:
+                # Seeded rows still carry the pre-rebrand owner name; a vendor-owned
+                # listing never uses the placeholder email, so it is left alone.
+                listing.owner_name = DEFAULT_OWNER_NAME
+                changed = True
 
     for slug, name, description, image_url, search_location in DEFAULT_DESTINATIONS:
         if not db.session.get(Destination, slug):
@@ -468,7 +699,13 @@ def seed_catalogue():
                 image_url=image_url,
                 search_location=search_location,
             ))
-    if db.session.new or db.session.dirty:
+            changed = True
+    for retired_slug in RETIRED_DESTINATION_SLUGS:
+        retired = db.session.get(Destination, retired_slug)
+        if retired:
+            db.session.delete(retired)
+            changed = True
+    if changed or db.session.new or db.session.dirty:
         db.session.commit()
 
     legacy_reviews = Review.query.filter(Review.target_type.is_(None)).all()
@@ -861,10 +1098,10 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
     document_id = f"{'INV' if document_type == 'invoice' else 'RCT'}-{booking.id:06d}"
     issued_at = booking.payment_confirmed_at if document_type == 'receipt' else booking.created_at
     issued_at = issued_at or datetime.utcnow()
-    document.setTitle(f'Lamu Tours {document_type.title()} {document_id}')
+    document.setTitle(f'Kenya Tours {document_type.title()} {document_id}')
     document.setFillColorRGB(0.13, 0.25, 0.22)
     document.setFont('Helvetica-Bold', 22)
-    document.drawString(72, 730, 'Lamu Tours')
+    document.drawString(72, 730, 'Kenya Tours')
     document.setFont('Helvetica', 10)
     document.setFillColorRGB(0.35, 0.40, 0.37)
     document.drawString(72, 712, safe_text(SITE_URL))
@@ -938,7 +1175,7 @@ def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> b
     message.set_content(
         f"Hello {booking.name},\n\n"
         f"We received your booking request for {booking.tour.replace('-', ' ').title()}.\n"
-        f"Date and time: {booking.date} at {booking.time} (Lamu time)\n"
+        f"Date and time: {booking.date} at {booking.time} (Kenya time)\n"
         f"Guests: {booking.guests}\n"
         f"Estimated total: KSh {booking.amount:,.0f}\n"
         f"Booking status: {booking.status}\n"
@@ -947,14 +1184,14 @@ def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> b
             if payment_confirmed
             else "Check the M-Pesa prompt on your phone to complete payment. We will confirm your booking after Daraja verifies the payment. Your invoice is attached.\n"
         )
-        + "\nYou can sign in at the Lamu Tours website to view and manage bookings made with your account.\n"
+        + "\nYou can sign in at the Kenya Tours website to view and manage bookings made with your account.\n"
     )
     try:
         invoice = generate_booking_document(booking, 'invoice')
-        message.add_attachment(invoice, maintype='application', subtype='pdf', filename=f'Lamu-Tours-Invoice-{booking.id}.pdf')
+        message.add_attachment(invoice, maintype='application', subtype='pdf', filename=f'Kenya-Tours-Invoice-{booking.id}.pdf')
         if booking.mpesa_receipt_number and booking.payment_status in {'paid', 'refunded'}:
             receipt = generate_booking_document(booking, 'receipt')
-            message.add_attachment(receipt, maintype='application', subtype='pdf', filename=f'Lamu-Tours-Receipt-{booking.id}.pdf')
+            message.add_attachment(receipt, maintype='application', subtype='pdf', filename=f'Kenya-Tours-Receipt-{booking.id}.pdf')
     except Exception:
         app.logger.exception('Could not generate payment documents for booking %s.', booking.id)
     try:
@@ -987,9 +1224,9 @@ def send_booking_status_notification(booking: Booking) -> bool:
     message['To'] = booking.email
     message.set_content(
         f"Hello {booking.name},\n\n"
-        f"The status of your Lamu Tours booking #{booking.id} is now: {booking.status.replace('_', ' ').title()}.\n"
+        f"The status of your Kenya Tours booking #{booking.id} is now: {booking.status.replace('_', ' ').title()}.\n"
         f"Experience: {booking.tour.replace('-', ' ').title()}\n"
-        f"Departure: {booking.date} at {booking.time} (Lamu time)\n\n"
+        f"Departure: {booking.date} at {booking.time} (Kenya time)\n\n"
         "Contact our team if you have questions about this update.\n"
     )
     try:
@@ -1358,7 +1595,7 @@ def admin_operations():
     } for source, values in source_metrics.items()]
     traffic_sources.sort(key=lambda row: (-row['visitors'], -row['booking_requests'], row['source']))
 
-    current_month = datetime.now(LAMU_TIMEZONE).replace(tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0)
+    current_month = datetime.now(KENYA_TIMEZONE).replace(tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0)
 
     def month_start(offset):
         month_index = current_month.year * 12 + current_month.month - 1 + offset
@@ -1612,14 +1849,14 @@ def tour_values(data):
     name = str(data.get('name', '')).strip()
     description = str(data.get('description', '')).strip()
     duration = str(data.get('duration', '')).strip()
-    category = str(data.get('category', 'Island experiences')).strip()
+    category = str(data.get('category', 'Experiences')).strip()
     itinerary = data.get('itinerary', '')
     inclusions = data.get('inclusions', '')
     exclusions = data.get('exclusions', '')
     itinerary = '\n'.join(str(step).strip() for step in itinerary if str(step).strip()) if isinstance(itinerary, list) else str(itinerary).strip()
     inclusions = '\n'.join(str(item).strip() for item in inclusions if str(item).strip()) if isinstance(inclusions, list) else str(inclusions).strip()
     exclusions = '\n'.join(str(item).strip() for item in exclusions if str(item).strip()) if isinstance(exclusions, list) else str(exclusions).strip()
-    pickup_point = str(data.get('pickup_point', 'Lamu Town waterfront')).strip()
+    pickup_point = str(data.get('pickup_point', 'Confirm with your operator')).strip()
     try:
         price = int(data.get('price', 0))
         min_group_size = int(data.get('min_group_size', 1))
@@ -1944,7 +2181,7 @@ def availability_payload(data, tour=None):
         capacity = int(data.get('capacity', 0))
     except (TypeError, ValueError) as exc:
         raise ValueError(str(exc) or 'Enter a valid departure date, time, and capacity.') from exc
-    if starts_at <= datetime.now(LAMU_TIMEZONE).replace(tzinfo=None) or capacity < 1:
+    if starts_at <= datetime.now(KENYA_TIMEZONE).replace(tzinfo=None) or capacity < 1:
         raise ValueError('Departure must be in the future and capacity must be positive.')
     return {'tour_slug': tour_slug, 'starts_at': starts_at, 'capacity': capacity}
 
@@ -2001,7 +2238,7 @@ def manage_availability(scope):
         starts_at = parse_local_datetime(data.get('starts_at', schedule.starts_at.isoformat()))
     except (TypeError, ValueError) as exc:
         return {'error': str(exc) or 'Enter a valid departure date, time, and capacity.'}, 400
-    if capacity < schedule.booked_count or starts_at <= datetime.now(LAMU_TIMEZONE).replace(tzinfo=None):
+    if capacity < schedule.booked_count or starts_at <= datetime.now(KENYA_TIMEZONE).replace(tzinfo=None):
         return {'error': 'Capacity cannot be below booked guests and departure must remain in the future.'}, 400
     schedule.capacity = capacity
     schedule.starts_at = starts_at
@@ -2099,7 +2336,7 @@ def public_tour_availability(tour_slug):
     tour = db.session.get(Tour, tour_slug)
     if not tour:
         return {'error': 'Tour not found.'}, 404
-    now = datetime.now(LAMU_TIMEZONE).replace(tzinfo=None)
+    now = datetime.now(KENYA_TIMEZONE).replace(tzinfo=None)
     schedules = TourSchedule.query.filter(
         TourSchedule.tour_slug == tour.slug,
         TourSchedule.is_active.is_(True),
@@ -2311,7 +2548,7 @@ def _fetch_json(url):
 
     request_object = urllib.request.Request(
         url,
-        headers={'Accept': 'application/json', 'User-Agent': 'LamuTours/1.0'}
+        headers={'Accept': 'application/json', 'User-Agent': 'KenyaTours/1.0'}
     )
     try:
         # Only allow-listed HTTPS provider hosts reach this call.
@@ -2499,7 +2736,7 @@ def booking_change_deadline(booking):
         starts_at = datetime.strptime(f'{booking.date} {booking.time}', '%Y-%m-%d %H:%M')
     except ValueError as exc:
         raise ValueError('This booking has an invalid departure time and cannot be changed online.') from exc
-    now = datetime.now(LAMU_TIMEZONE).replace(tzinfo=None)
+    now = datetime.now(KENYA_TIMEZONE).replace(tzinfo=None)
     if starts_at - now < timedelta(hours=48):
         raise ValueError('Bookings can only be cancelled or rescheduled at least 48 hours before departure.')
 
@@ -2573,7 +2810,7 @@ def customer_reschedule_booking(booking_id):
         return {'error': 'Choose an available departure for this tour.'}, 400
     if schedule.id == booking.schedule_id:
         return {'error': 'Choose a different departure to reschedule.'}, 400
-    if schedule.starts_at - datetime.now(LAMU_TIMEZONE).replace(tzinfo=None) < timedelta(hours=48):
+    if schedule.starts_at - datetime.now(KENYA_TIMEZONE).replace(tzinfo=None) < timedelta(hours=48):
         return {'error': 'The new departure must be at least 48 hours away.'}, 400
     try:
         reserve_schedule(schedule.id, booking.guests)
@@ -2753,7 +2990,7 @@ def booking_confirmation():
             tour_slug=tour_item.slug,
             is_active=True,
         ).first()
-        if not schedule or schedule.starts_at <= datetime.now(LAMU_TIMEZONE).replace(tzinfo=None):
+        if not schedule or schedule.starts_at <= datetime.now(KENYA_TIMEZONE).replace(tzinfo=None):
             message = 'Choose an available departure before submitting your booking.'
             if request.is_json:
                 return {'error': message}, 400
@@ -2900,7 +3137,7 @@ def payment_document(payment_reference, document_type):
         BytesIO(pdf),
         mimetype='application/pdf',
         as_attachment=True,
-        download_name=f'Lamu-Tours-{document_type.title()}-{booking.id}.pdf',
+        download_name=f'Kenya-Tours-{document_type.title()}-{booking.id}.pdf',
         max_age=0,
     )
 

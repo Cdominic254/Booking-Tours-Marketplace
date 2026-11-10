@@ -148,8 +148,8 @@ def initiate_stk_push(phone_number, amount, booking_id):
             'PartyB': config['shortcode'],
             'PhoneNumber': phone_number,
             'CallBackURL': config['callback_url'],
-            'AccountReference': f'Lamu-{booking_id}',
-            'TransactionDesc': f'Lamu Tours booking {booking_id}',
+            'AccountReference': f'KT-{booking_id}',
+            'TransactionDesc': f'Kenya Tours booking {booking_id}',
         },
         headers={
             'Authorization': f'Bearer {token}',

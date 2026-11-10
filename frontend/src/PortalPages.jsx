@@ -30,13 +30,13 @@ function LanguageToggle() {
       setLanguage(event.detail.language);
     }
 
-    document.addEventListener('lamu-language-changed', syncLanguage);
-    return () => document.removeEventListener('lamu-language-changed', syncLanguage);
+    document.addEventListener('kenya-language-changed', syncLanguage);
+    return () => document.removeEventListener('kenya-language-changed', syncLanguage);
   }, []);
 
   function toggleLanguage() {
     const nextLanguage = language === 'en' ? 'sw' : 'en';
-    window.setLamuLanguage?.(nextLanguage);
+    window.setKenyaLanguage?.(nextLanguage);
     setLanguage(nextLanguage);
   }
 
@@ -60,10 +60,10 @@ function PortalCard({ children }) {
 
 function PortalIdentity({ children }) {
   return (
-    <a className="brand-lockup flex items-center gap-3" href="/" aria-label={`Lamu Tours ${children}`}>
+    <a className="brand-lockup flex items-center gap-3" href="/" aria-label={`Kenya Tours & Marketplace ${children}`}>
       <img className="brand-mark h-12 w-12" src="/logo.svg" alt="" />
       <span className="flex flex-col">
-        <span className="brand-name text-xl font-bold text-[#203b35]">Lamu Tours</span>
+        <span className="brand-name text-lg font-bold text-[#203b35] sm:text-xl">Kenya Tours & Marketplace</span>
         <span className="brand-tagline text-[0.6rem] font-bold uppercase tracking-[0.14em] text-[#52718a]">{children}</span>
       </span>
     </a>
@@ -78,8 +78,8 @@ function PortalLogin({ role }) {
       <header className="border-b border-[#e9e5db] bg-white px-5 py-4 sm:px-8"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4"><PortalIdentity>{isVendor ? 'Vendor portal' : 'Admin portal'}</PortalIdentity><LanguageToggle /></div></header>
       <PortalCard>
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">{isVendor ? 'Vendor access' : 'Administration'}</p>
-        <h1 className="display-font mt-3 text-4xl text-[#203b35]">{isVendor ? 'Welcome back to your island business.' : 'Welcome to your control room.'}</h1>
-        <p className="mt-3 text-[#52615b]">{isVendor ? 'Your Lamu listings, departures, and guest bookings are all waiting here.' : 'Your Lamu marketplace overview, catalog, and account controls.'}</p>
+        <h1 className="display-font mt-3 text-4xl text-[#203b35]">{isVendor ? 'Welcome back to your business.' : 'Welcome to your control room.'}</h1>
+        <p className="mt-3 text-[#52615b]">{isVendor ? 'Your Kenyan listings, departures, and guest bookings are all waiting here.' : 'Your Kenya marketplace overview, catalog, and account controls.'}</p>
         {error && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
         <form className="mt-7 space-y-5" action={isVendor ? '/vendor/login' : '/admin/login'} method="post">
           <label className="block"><span className="field-label">Email address</span><input className="field" name="email" type="email" autoComplete="username" required /></label>
@@ -147,7 +147,7 @@ export function VendorRegistrationPage() {
       <header className="border-b border-[#e9e5db] bg-white px-5 py-4 sm:px-8"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4"><PortalIdentity>Vendor portal</PortalIdentity><LanguageToggle /></div></header>
       <PortalCard>
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">Partner with us</p>
-        <h1 className="display-font mt-3 text-4xl text-[#203b35]">Bring your Lamu experience to more travelers.</h1>
+        <h1 className="display-font mt-3 text-4xl text-[#203b35]">Bring your Kenyan experience to more travelers.</h1>
         <p className="mt-3 text-[#52615b]">Bring your local knowledge to more travelers. Create an account to publish experiences, set departures, and keep your bookings in view.</p>
         {error && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
         <form className="mt-7 space-y-5" onSubmit={submitRegistration}>
@@ -658,7 +658,7 @@ function AvailabilitySection({ tours, endpoint, csrfToken }) {
       <Notice error>{error}</Notice><Notice>{message}</Notice>
       <form className="grid gap-4 sm:grid-cols-3" onSubmit={save}>
         <label><span className="field-label">Tour</span><select className="field" name="tour_slug" required defaultValue=""><option value="" disabled>Choose a tour</option>{tours.map((tour) => <option value={tour.slug} key={tour.slug}>{tour.name}</option>)}</select></label>
-        <label><span className="field-label">Departure date and time (Lamu time)</span><input className="field" type="datetime-local" name="starts_at" required /></label>
+        <label><span className="field-label">Departure date and time (Kenya time)</span><input className="field" type="datetime-local" name="starts_at" required /></label>
         <label><span className="field-label">Guest capacity</span><input className="field" type="number" min="1" name="capacity" required /></label>
         <button className="rounded-full bg-[#203b35] px-5 py-2.5 text-sm font-semibold text-white sm:col-span-3 sm:justify-self-start" type="submit" disabled={!tours.length}>Add departure</button>
       </form>
@@ -672,7 +672,7 @@ function AvailabilitySection({ tours, endpoint, csrfToken }) {
               <button className="action-danger text-sm" type="button" onClick={() => remove(schedule)}>Remove</button>
             </div>
             <form className="grid gap-3 sm:grid-cols-[1fr_10rem_auto]" onSubmit={(event) => update(schedule, event)}>
-              <label><span className="field-label">Departure (Lamu time)</span><input className="field" type="datetime-local" name="starts_at" defaultValue={schedule.starts_at} required /></label>
+              <label><span className="field-label">Departure (Kenya time)</span><input className="field" type="datetime-local" name="starts_at" defaultValue={schedule.starts_at} required /></label>
               <label><span className="field-label">Capacity</span><input className="field" type="number" name="capacity" min={schedule.booked_count} defaultValue={schedule.capacity} required /></label>
               <button className="self-end rounded-full border border-[#203b35] px-4 py-3 text-sm font-semibold text-[#203b35]" type="submit">Update</button>
             </form>
@@ -1066,7 +1066,7 @@ export function AdminActivityDashboardPage() {
     <DashboardLayout role="Admin" actor="Bookings and messages" signOut={signOut}>
       <DashboardStatus error={error || signOutError} />
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-[#52615b]">A clear view of the latest guest enquiries and tour booking activity across Lamu.</p>
+        <p className="text-sm text-[#52615b]">A clear view of the latest guest enquiries and tour booking activity across Kenya.</p>
         <a className="font-semibold text-[#9a5534] hover:underline" href="/admin">Catalog and accounts →</a>
       </div>
       {data && <div className="grid gap-4 sm:grid-cols-2">
@@ -1124,7 +1124,7 @@ export function AdminDashboardPage() {
 
   const vendorOwner = (item) => item.vendor_id
     ? `Vendor listing · ${data.vendors.find((vendor) => vendor.id === item.vendor_id)?.name || 'Vendor'}`
-    : 'Managed by Lamu Tours';
+    : 'Managed by Kenya Tours';
 
   return (
     <DashboardLayout role="Admin" actor="Catalog management" signOut={signOut}>

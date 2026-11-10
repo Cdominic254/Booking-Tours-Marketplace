@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { whatsappUrl } from './utils.js';
 
-const HISTORY_KEY = 'lamu-trip-search-history';
+const HISTORY_KEY = 'kenya-trip-search-history';
 const AREA_TERMS = {
-  beach: ['beach', 'coast', 'shore', 'sea', 'sand', 'shela', 'manda', 'kipungani'],
-  heritage: ['old town', 'heritage', 'cultural', 'history', 'museum', 'swahili', 'lamu town'],
+  beach: ['beach', 'coast', 'shore', 'sea', 'sand', 'diani', 'watamu', 'lamu'],
+  heritage: ['old town', 'heritage', 'cultural', 'history', 'museum', 'swahili', 'lamu town', 'mombasa'],
 };
 const ACTIVITY_TERMS = {
   beach: ['beach', 'coast', 'shore', 'sea', 'sand', 'swim'],
@@ -13,7 +13,7 @@ const ACTIVITY_TERMS = {
   snorkeling: ['snorkel', 'reef', 'swim'],
 };
 
-function todayInLamu() {
+function todayInKenya() {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Africa/Nairobi',
     year: 'numeric',
@@ -107,7 +107,7 @@ function recommendationScore(tour, search) {
 }
 
 export default function SmartTripPlanner({ tours, properties, destinations = [], whatsappPhone = '', guests: initialGuests = 1 }) {
-  const today = useMemo(todayInLamu, []);
+  const today = useMemo(todayInKenya, []);
   const [language, setLanguage] = useState(document.documentElement.lang === 'sw' ? 'sw' : 'en');
   const [filters, setFilters] = useState({
     startDate: today,
@@ -132,8 +132,8 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
     function syncLanguage(event) {
       setLanguage(event.detail.language);
     }
-    document.addEventListener('lamu-language-changed', syncLanguage);
-    return () => document.removeEventListener('lamu-language-changed', syncLanguage);
+    document.addEventListener('kenya-language-changed', syncLanguage);
+    return () => document.removeEventListener('kenya-language-changed', syncLanguage);
   }, []);
 
   useEffect(() => {
@@ -272,13 +272,13 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
     ));
     const total = itinerary.reduce((sum, item) => sum + item.tour.price * item.guests, 0);
     const message = isSwahili
-      ? ['Habari Lamu Tours, tafadhali thibitisheni mpango huu wa safari:', ...lines, `Jumla ya makadirio ya shughuli: ${formatPrice(total, language)}.`, 'Tafadhali thibitisheni nafasi na mtumie hatua salama za malipo ya M-Pesa.'].join('\n')
-      : ['Hello Lamu Tours, please help confirm this trip plan:', ...lines, `Estimated activities total: ${formatPrice(total, language)}.`, 'Please confirm availability and share the secure M-Pesa checkout steps.'].join('\n');
+      ? ['Habari Kenya Tours, tafadhali thibitisheni mpango huu wa safari:', ...lines, `Jumla ya makadirio ya shughuli: ${formatPrice(total, language)}.`, 'Tafadhali thibitisheni nafasi na mtumie hatua salama za malipo ya M-Pesa.'].join('\n')
+      : ['Hello Kenya Tours, please help confirm this trip plan:', ...lines, `Estimated activities total: ${formatPrice(total, language)}.`, 'Please confirm availability and share the secure M-Pesa checkout steps.'].join('\n');
     return whatsappUrl(message, whatsappPhone);
   }
 
   function dateEnquiryUrl() {
-    const message = `Hello Lamu Tours, please help arrange an experience for ${filters.guests} guests between ${filters.startDate}${filters.endDate ? ` and ${filters.endDate}` : ''}.`;
+    const message = `Hello Kenya Tours, please help arrange an experience for ${filters.guests} guests between ${filters.startDate}${filters.endDate ? ` and ${filters.endDate}` : ''}.`;
     return whatsappUrl(message, whatsappPhone);
   }
 
@@ -329,7 +329,7 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#a75f3a]">Smart trip planner</p>
-          <h2 id="smart-plan-heading" className="display-font mt-2 text-3xl text-[#203b35]">Build a Lamu plan that fits.</h2>
+          <h2 id="smart-plan-heading" className="display-font mt-2 text-3xl text-[#203b35]">Build a Kenya plan that fits.</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-[#52615b]">Search real tour departures by date and group size, then shape a day-by-day itinerary.</p>
 
           <form className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" onSubmit={saveSearch}>
@@ -413,7 +413,7 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
               <div className="border-t border-[#e9e5db] pt-4">
                 <p className="flex justify-between gap-3 text-sm text-[#52615b]"><span>Estimated activities total</span><strong className="text-[#203b35]">{formatPrice(itineraryTotal, language)}</strong></p>
                 <p className="mt-1 text-xs text-[#52615b]">Stay, transport, and final availability are not included.</p>
-                <a className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={quoteUrl()} target="_blank" rel="noreferrer">{whatsappPhone ? 'Message Lamu Tours on WhatsApp' : 'Share quote on WhatsApp'}</a>
+                <a className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={quoteUrl()} target="_blank" rel="noreferrer">{whatsappPhone ? 'Message Kenya Tours on WhatsApp' : 'Share quote on WhatsApp'}</a>
               </div>
             </>
           )}
