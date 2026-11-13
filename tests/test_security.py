@@ -94,14 +94,11 @@ def test_public_catalogue_exposes_configured_whatsapp_business_phone(application
     assert response.get_json()['whatsapp_business_phone'] == '254712345678'
 
 
-def test_public_review_submissions_are_rate_limited(application_client):
+def test_review_submissions_are_rate_limited_for_anonymous_visitors(application_client):
     payload = {
-        'reviewer_name': 'Test Reviewer',
-        'reviewer_email': 'reviewer@example.test',
-        'target_type': 'tour',
-        'target_id': 'not-a-tour',
+        'booking_id': 1,
         'rating': 5,
-        'comment': 'A review used to exercise the public rate limit.',
+        'comment': 'A review used to exercise the review rate limit.',
     }
     responses = [
         application_client.post(
@@ -112,7 +109,7 @@ def test_public_review_submissions_are_rate_limited(application_client):
         for _ in range(6)
     ]
 
-    assert [response.status_code for response in responses[:5]] == [400] * 5
+    assert [response.status_code for response in responses[:5]] == [401] * 5
     assert responses[5].status_code == 429
 
 
@@ -131,23 +128,23 @@ def test_booking_checkout_creation_is_rate_limited(application_client, monkeypat
     assert responses[10].status_code == 429
 
 
-def test_public_reviews_reject_overlong_fields(application_client):
-    with application_client.application.app_context():
-        tour = application.Tour.query.first()
-        assert tour is not None
-        slug = tour.slug
-
+def test_anonymous_review_submissions_are_rejected_before_validation(application_client):
     response = application_client.post('/review-submit', json={
-        'reviewer_name': 'Test Reviewer',
-        'reviewer_email': 'reviewer@example.test',
-        'target_type': 'tour',
-        'target_id': slug,
+        'booking_id': 1,
         'rating': 5,
         'comment': 'x' * 3001,
     })
 
-    assert response.status_code == 400
+    assert response.status_code == 401
     assert 'error' in response.get_json()
+
+
+def test_review_pages_are_readable_without_an_account(application_client):
+    response = application_client.get('/reviews?target_type=tour&target_id=not-a-tour')
+
+    assert response.status_code == 200
+    assert response.get_json()['reviews'] == []
+    assert response.get_json()['summary'] == {'rating': 0, 'review_count': 0}
 
 
 @pytest.mark.parametrize('url', [

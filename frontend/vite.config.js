@@ -19,6 +19,7 @@ const backendPaths = [
   '/review-submit',
   '/reviews',
   '/vendor',
+  '/partner',
 ];
 
 export default defineConfig({
@@ -28,16 +29,5 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: Object.fromEntries(backendPaths.map((path) => [path, 'http://127.0.0.1:5000'])),
-  },
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes('/node_modules/three/src/renderers/shaders/ShaderChunk/')) {
-            return 'three-shader-chunks';
-          }
-        },
-      },
-    },
   },
 });

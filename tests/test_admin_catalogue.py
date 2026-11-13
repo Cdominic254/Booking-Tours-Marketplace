@@ -145,9 +145,10 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
     operations = response.get_json()
     assert operations['settings'] == {
         'commission_rate': 15,
-        'refund_policy': 'manual_review',
+        'refund_policy': 'automatic',
         'cancellation_window_hours': 48,
     }
+    assert operations['refunds_due'] == {'count': 0, 'amount': 0}
     assert operations['analytics']['paid_revenue'] == 5000
     assert operations['analytics']['commission_earned'] == 750
     assert operations['analytics']['by_tour'][0]['tour_name'] == 'Operations Sailing'
@@ -160,6 +161,11 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
     assert admin.put(
         '/api/admin/settings',
         json={'commission_rate': 17.5, 'refund_policy': 'automatic'},
+        headers=headers,
+    ).status_code == 200
+    assert admin.put(
+        '/api/admin/settings',
+        json={'commission_rate': 17.5, 'refund_policy': 'manual_review'},
         headers=headers,
     ).status_code == 400
 
@@ -185,7 +191,7 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
         'password': 'test-vendor-password',
     })
     assert inactive_login.status_code == 302
-    assert 'Invalid%20vendor%20email' in inactive_login.location
+    assert 'Invalid%20partner%20email' in inactive_login.location
     assert admin.post(
         f'/api/admin/users/customer/{customer_id}/status',
         json={'active': True},
@@ -199,24 +205,29 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
 
     response = admin.post(
         f'/api/admin/bookings/{booking_id}/refund',
-        json={'status': 'pending_review'},
+        json={'status': 'pending', 'reason': 'Customer asked for the money back.'},
         headers=headers,
     )
     assert response.status_code == 200
-    response = admin.post(
+    assert response.get_json()['booking']['refund_status'] == 'pending'
+    assert response.get_json()['booking']['refund_amount'] == 5000
+    assert admin.get('/api/admin/operations').get_json()['refunds_due'] == {'count': 1, 'amount': 5000}
+    assert admin.post(
         f'/api/admin/bookings/{booking_id}/refund',
         json={'status': 'approved'},
         headers=headers,
-    )
-    assert response.status_code == 200
+    ).status_code == 409
     response = admin.post(
         f'/api/admin/bookings/{booking_id}/refund',
-        json={'status': 'completed'},
+        json={'status': 'paid'},
         headers=headers,
     )
     assert response.status_code == 200
     assert response.get_json()['gateway_refund_issued'] is False
+    assert response.get_json()['booking']['refund_status'] == 'paid'
+    assert response.get_json()['booking']['refund_paid_at']
     assert response.get_json()['booking']['payment_status'] == 'refunded'
+    assert admin.get('/api/admin/operations').get_json()['refunds_due'] == {'count': 0, 'amount': 0}
     refunded_tour = next(
         row for row in admin.get('/api/admin/operations').get_json()['analytics']['by_tour']
         if row['tour'] == tour_slug
@@ -290,8 +301,8 @@ def test_admin_analytics_tracks_funnel_sources_occupancy_and_property_revenue(ad
             slug=property_slug,
             owner_name='Analytics owner',
             owner_email=f'{slug_suffix}@example.test',
-            name='Analytics stay',
-            property_type='guest house',
+            name='Analytics rental',
+            property_type='rental',
             location='Lamu',
             price_per_night=12000,
             guests=4,
@@ -322,6 +333,15 @@ def test_admin_analytics_tracks_funnel_sources_occupancy_and_property_revenue(ad
         application.db.session.commit()
         target_month = departure.starts_at.strftime('%Y-%m')
 
+        month_departures = [
+            item for item in application.TourSchedule.query.all()
+            if item.starts_at.strftime('%Y-%m') == target_month
+        ]
+        # Seeded catalogue departures can share this month, so the expected
+        # totals are read from the schedules instead of assuming one fixture.
+        expected_capacity = sum(item.capacity for item in month_departures)
+        expected_seats = sum(item.booked_count for item in month_departures)
+
     try:
         response = admin.get('/api/admin/operations')
         assert response.status_code == 200
@@ -336,9 +356,9 @@ def test_admin_analytics_tracks_funnel_sources_occupancy_and_property_revenue(ad
         assert source['booking_requests'] == 1
         assert source['paid_revenue'] == 12000
         occupancy = next(row for row in analytics['occupancy_trends'] if row['month'] == target_month)
-        assert occupancy['capacity'] == 6
-        assert occupancy['booked_seats'] == 3
-        assert occupancy['occupancy_rate'] == 50
+        assert occupancy['capacity'] == expected_capacity
+        assert occupancy['booked_seats'] == expected_seats
+        assert occupancy['occupancy_rate'] == round(expected_seats / expected_capacity * 100, 1)
         property_row = next(row for row in analytics['property_revenue'] if row['slug'] == property_slug)
         assert property_row['paid_bookings'] == 1
         assert property_row['paid_revenue'] == 12000
@@ -400,7 +420,7 @@ def test_property_reviews_are_attached_to_the_selected_property(admin_client):
     client, headers = admin_client
     response = client.post('/api/admin/properties', json={
         'name': 'Test Shela Retreat',
-        'property_type': 'villa',
+        'property_type': 'apartment',
         'location': 'Shela',
         'price_per_night': 7000,
         'guests': 4,
@@ -419,7 +439,7 @@ def test_property_reviews_are_attached_to_the_selected_property(admin_client):
 
     invalid_coordinates = client.put(f"/api/admin/properties/{listing['id']}", json={
         'name': 'Test Shela Retreat',
-        'property_type': 'villa',
+        'property_type': 'apartment',
         'location': 'Shela',
         'price_per_night': 7000,
         'guests': 4,
@@ -430,16 +450,19 @@ def test_property_reviews_are_attached_to_the_selected_property(admin_client):
     }, headers=headers)
     assert invalid_coordinates.status_code == 400
 
-    response = client.post('/review-submit', json={
-        'reviewer_name': 'Guest',
-        'reviewer_email': 'guest@example.test',
-        'rating': 5,
-        'comment': 'Lovely stay.',
-        'target_type': 'property',
-        'target_id': listing['slug'],
-    })
-    assert response.status_code == 201
-    assert response.get_json()['review']['place'] == listing['name']
+    # Reviews are written by customers from their bookings, so seed one directly
+    # to check that removing the listing also removes its published reviews.
+    with application.app.app_context():
+        application.db.session.add(application.Review(
+            reviewer_name='Guest',
+            reviewer_email='guest@example.test',
+            place=listing['name'],
+            target_type='property',
+            target_id=listing['slug'],
+            rating=5,
+            comment='Lovely stay.',
+        ))
+        application.db.session.commit()
 
     assert len(client.get('/reviews?target_type=property&target_id=' + listing['slug']).get_json()['reviews']) == 1
     assert client.get('/reviews?target_type=tour&target_id=' + listing['slug']).get_json()['reviews'] == []
@@ -536,17 +559,20 @@ def test_hospitality_page_is_removed_and_catalog_is_public():
     assert catalogue['destinations']
 
 
-def test_public_reviews_require_a_valid_catalog_listing():
-    response = application.app.test_client().post('/review-submit', json={
-        'reviewer_name': 'Guest',
-        'reviewer_email': 'guest@example.test',
+def test_reviews_require_a_booking_and_are_read_only_for_visitors():
+    public_client = application.app.test_client()
+
+    response = public_client.post('/review-submit', json={
         'rating': 5,
         'comment': 'Unattached review.',
         'target_type': 'tour',
         'target_id': 'not-a-real-tour',
     })
 
-    assert response.status_code == 400
+    assert response.status_code == 401
+    reviews = public_client.get('/reviews?target_type=tour&target_id=not-a-real-tour')
+    assert reviews.status_code == 200
+    assert reviews.get_json()['reviews'] == []
 
 
 def test_admin_mutations_require_csrf(admin_client):
@@ -653,12 +679,12 @@ def test_vendor_can_manage_only_their_own_tours_and_properties(vendor_pair):
         'price': 1800,
     }, headers=first_headers)
     property_response = first_client.post('/api/vendor/properties', json={
-        'name': f'Vendor {first_id} Guest House',
-        'property_type': 'guest house',
+        'name': f'Vendor {first_id} Hostel',
+        'property_type': 'hostel',
         'location': 'Shela',
         'price_per_night': 6000,
         'guests': 3,
-        'description': 'A vendor-owned guest house.',
+        'description': 'A vendor-owned hostel.',
     }, headers=first_headers)
     assert tour_response.status_code == 201
     assert property_response.status_code == 201
@@ -848,7 +874,71 @@ def test_frontend_routes_serve_the_built_react_app(tmp_path, monkeypatch, admin_
     assert b'React app' in client.get('/dashboard').data
     assert b'React app' in client.get('/vendor/login').data
     assert b'React app' in client.get('/vendor/register').data
+    assert b'React app' in client.get('/partner/login').data
+    assert b'React app' in client.get('/partner/register').data
+    for page in (
+        '/properties.html',
+        '/explore.html',
+        '/safari-operators.html',
+        '/destinations.html',
+        '/blog.html',
+        '/blog/when-to-visit-kenya',
+        '/gallery.html',
+        '/reviews.html',
+        '/compare.html',
+        '/wishlist.html',
+        '/faq.html',
+        '/how-it-works.html',
+        '/booking-guide.html',
+        '/cancellation-policy.html',
+        '/privacy-policy.html',
+        '/terms.html',
+    ):
+        assert b'React app' in client.get(page).data, page
     assert b'console.log("React")' in client.get('/assets/main.js').data
+
+
+def test_partner_portal_routes_use_the_partner_session(tmp_path, monkeypatch):
+    dist = tmp_path / 'dist'
+    dist.mkdir()
+    (dist / 'index.html').write_text('<div id="root">React app</div>', encoding='utf-8')
+    monkeypatch.setattr(application, 'FRONTEND_DIST', str(dist))
+
+    email = f'partner-{uuid.uuid4().hex}@example.test'
+    with application.app.app_context():
+        vendor = application.VendorAccount(
+            name='Partner Alias',
+            email=email,
+            password_hash=application.generate_password_hash('partner-alias-password'),
+        )
+        application.db.session.add(vendor)
+        application.db.session.commit()
+        vendor_id = vendor.id
+
+    client = application.app.test_client()
+    try:
+        failed = client.post('/partner/login', data={'email': email, 'password': 'wrong-password'})
+        assert failed.status_code == 302
+        assert failed.headers['Location'].startswith('/partner/login?error=')
+
+        signed_in = client.post('/partner/login', data={'email': email, 'password': 'partner-alias-password'})
+        assert signed_in.status_code == 302
+        assert signed_in.headers['Location'].endswith('/partner/dashboard')
+        with client.session_transaction() as session:
+            csrf_token = session['vendor_csrf']
+
+        assert b'React app' in client.get('/partner/dashboard').data
+        assert client.post('/partner/logout', headers={'X-CSRF-Token': csrf_token}).status_code == 204
+
+        anonymous = client.get('/partner/dashboard')
+        assert anonymous.status_code == 302
+        assert anonymous.headers['Location'].endswith('/partner/login')
+    finally:
+        with application.app.app_context():
+            vendor = application.db.session.get(application.VendorAccount, vendor_id)
+            if vendor:
+                application.db.session.delete(vendor)
+                application.db.session.commit()
 
 
 def test_contact_form_accepts_json_for_the_react_frontend(monkeypatch):
@@ -867,3 +957,195 @@ def test_contact_form_accepts_json_for_the_react_frontend(monkeypatch):
         'message': 'Your message has been received.',
         'email_sent': False,
     }
+
+
+def test_admin_counts_newsletter_subscribers(admin_client):
+    client, _ = admin_client
+    email = f'admin-newsletter-{uuid.uuid4().hex[:10]}@example.test'
+    try:
+        signup = client.post('/api/newsletter', json={'email': email, 'source': 'footer'})
+        assert signup.status_code == 201
+
+        data = client.get('/api/admin/catalogue').get_json()
+        assert data['newsletter']['count'] >= 1
+        assert any(item['email'] == email for item in data['newsletter']['recent'])
+    finally:
+        with application.app.app_context():
+            application.NewsletterSubscriber.query.filter_by(email=email).delete()
+            application.db.session.commit()
+
+
+@pytest.mark.parametrize('property_type', ['hotel', 'lodge', 'resort', 'apartment', 'rental', 'hostel'])
+def test_admin_accepts_each_accommodation_type(admin_client, property_type):
+    client, headers = admin_client
+    response = client.post('/api/admin/properties', json={
+        'name': f'Test {property_type.title()} Listing',
+        'property_type': property_type,
+        'location': 'Lamu',
+        'price_per_night': 5000,
+        'guests': 2,
+        'description': 'A listing used to verify the accommodation vocabulary.',
+    }, headers=headers)
+
+    assert response.status_code == 201
+    listing = response.get_json()['property']
+    assert listing['property_type'] == property_type
+    assert client.delete(f"/api/admin/properties/{listing['id']}", headers=headers).status_code == 204
+
+
+@pytest.mark.parametrize('legacy_type', ['villa', 'guest house', 'home'])
+def test_legacy_accommodation_types_are_saved_as_rentals(admin_client, legacy_type):
+    client, headers = admin_client
+    response = client.post('/api/admin/properties', json={
+        'name': f'Test Legacy {legacy_type.title()}',
+        'property_type': legacy_type,
+        'location': 'Lamu',
+        'price_per_night': 5000,
+        'guests': 2,
+        'description': 'A listing created with an older accommodation type.',
+    }, headers=headers)
+
+    assert response.status_code == 201
+    listing = response.get_json()['property']
+    assert listing['property_type'] == 'rental'
+    assert client.delete(f"/api/admin/properties/{listing['id']}", headers=headers).status_code == 204
+
+
+def test_catalogue_ships_multi_day_safari_packages():
+    catalogue = application.app.test_client().get('/api/catalogue').get_json()
+    packages = [tour for tour in catalogue['tours'] if tour['tour_type'] == 'multi-day-safari']
+
+    assert packages
+    assert all(tour['duration_days'] >= 2 for tour in packages)
+    with application.app.app_context():
+        for tour in packages:
+            departures = application.TourSchedule.query.filter_by(tour_slug=tour['slug'], is_active=True).all()
+            assert departures, tour['slug']
+
+
+def test_catalogue_ships_every_browsable_region_destination():
+    catalogue = application.app.test_client().get('/api/catalogue').get_json()
+    destinations = {destination['slug'] for destination in catalogue['destinations']}
+
+    assert {
+        'nairobi', 'naivasha', 'maasai-mara', 'amboseli', 'tsavo',
+        'mount-kenya', 'mombasa', 'diani', 'lamu', 'watamu',
+    } <= destinations
+    tour_destinations = {tour['destination'] for tour in catalogue['tours']}
+    stay_destinations = {stay['destination'] for stay in catalogue['properties']}
+    for slug in ('tsavo', 'mount-kenya'):
+        assert slug in tour_destinations, slug
+        assert slug in stay_destinations, slug
+
+
+def test_unknown_accommodation_type_is_rejected(admin_client):
+    client, headers = admin_client
+    response = client.post('/api/admin/properties', json={
+        'name': 'Test Treehouse',
+        'property_type': 'treehouse',
+        'location': 'Lamu',
+        'price_per_night': 5000,
+        'guests': 2,
+        'description': 'A listing that uses an unsupported accommodation type.',
+    }, headers=headers)
+
+    assert response.status_code == 400
+    assert 'type' in response.get_json()['error']
+
+
+def test_existing_legacy_listings_are_migrated_on_startup():
+    token = uuid.uuid4().hex
+    with application.app.app_context():
+        listing = application.Property(
+            slug=f'legacy-stay-{token}',
+            owner_name='Legacy owner',
+            owner_email=f'{token}@example.test',
+            name='Legacy Guest House',
+            property_type='guest house',
+            location='Lamu',
+            price_per_night=4500,
+            guests=2,
+            description='A listing saved before the accommodation vocabulary existed.',
+        )
+        application.db.session.add(listing)
+        application.db.session.commit()
+
+        application.ensure_catalog_columns()
+        application.db.session.refresh(listing)
+        assert listing.property_type == 'rental'
+
+        application.db.session.delete(listing)
+        application.db.session.commit()
+
+
+def test_admin_promotions_are_labelled_tracked_and_removable(admin_client):
+    """A paid placement is labelled publicly, counted, and easy to end."""
+    client, headers = admin_client
+    today = datetime.now(application.KENYA_TIMEZONE).date()
+    payload = {
+        'listing_type': 'tour',
+        'listing_slug': 'tsavo-game-drive',
+        'tier': 'spotlight',
+        'headline': 'Red elephants',
+        'starts_on': today.isoformat(),
+        'ends_on': (today + timedelta(days=7)).isoformat(),
+    }
+
+    response = client.post('/api/admin/promotions', json=payload, headers=headers)
+    assert response.status_code == 201
+    promotion = response.get_json()['promotion']
+    assert promotion['tier'] == 'spotlight'
+    assert promotion['rank'] == 2
+    assert promotion['listing_name'] == 'Tsavo Red-Elephant Safari'
+
+    catalogue = client.get('/api/catalogue').get_json()
+    tour = next(item for item in catalogue['tours'] if item['slug'] == 'tsavo-game-drive')
+    assert tour['promotion']['sponsored'] is True
+    assert tour['promotion']['label'] == 'Red elephants'
+
+    search = client.get('/api/search', query_string={'q': 'tsavo'}).get_json()
+    assert search['results'][0]['slug'] == 'tsavo-game-drive'
+    assert search['results'][0]['promotion']['sponsored'] is True
+
+    assert client.post('/api/promotions/tour/tsavo-game-drive/click').status_code == 204
+    assert client.post('/api/promotions/tour/not-a-tour/click').status_code == 204
+    assert client.post('/api/promotions/service/anything/click').status_code == 400
+
+    admin_view = client.get('/api/admin/catalogue').get_json()
+    saved = next(item for item in admin_view['promotions'] if item['listing_slug'] == 'tsavo-game-drive')
+    assert saved['clicks'] == 1
+    assert saved['impressions'] >= 1
+    assert admin_view['promotion_max_active'] == 6
+
+    assert client.delete(f"/api/admin/promotions/{saved['id']}", headers=headers).status_code == 204
+    catalogue = client.get('/api/catalogue').get_json()
+    tour = next(item for item in catalogue['tours'] if item['slug'] == 'tsavo-game-drive')
+    assert tour['promotion'] is None
+
+
+def test_promotions_require_csrf_a_published_listing_and_a_valid_window(admin_client):
+    client, headers = admin_client
+    payload = {
+        'listing_type': 'tour',
+        'listing_slug': 'tsavo-game-drive',
+        'tier': 'featured',
+        'starts_on': '2026-01-10',
+        'ends_on': '2026-01-20',
+    }
+
+    assert client.post('/api/admin/promotions', json=payload).status_code == 403
+    assert client.post(
+        '/api/admin/promotions',
+        json={**payload, 'listing_slug': 'missing-listing'},
+        headers=headers,
+    ).status_code == 400
+    assert client.post(
+        '/api/admin/promotions',
+        json={**payload, 'ends_on': '2026-01-01'},
+        headers=headers,
+    ).status_code == 400
+    assert client.post(
+        '/api/admin/promotions',
+        json={**payload, 'starts_on': 'not-a-date'},
+        headers=headers,
+    ).status_code == 400

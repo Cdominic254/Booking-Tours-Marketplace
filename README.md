@@ -5,7 +5,7 @@ Booking and tour-management website for Kenya-wide travel. Lamu is one of eight 
 ## Features
 
 - Tour discovery, destination filtering, availability, bookings, and customer booking lookup
-- Admin and vendor portals, catalogue management, and reviews
+- Admin and partner portals, catalogue management, and reviews
 - Safaricom Daraja M-Pesa STK Push payments
 - Contact submissions, optional email notifications, and currency conversion
 - Bundled destination image assets served from `/images` and `/pictures`
@@ -63,6 +63,10 @@ For local development, SQLite and the in-memory rate limiter are supported. They
 
 Tour bookings are paid in KES through Safaricom Daraja Lipa Na M-Pesa Online. A booking remains pending until the payment callback is checked against Daraja's STK Query API; a browser redirect is not proof of payment. Test successful, cancelled, and timed-out payments with sandbox credentials before switching `DARAJA_ENV` to `production`.
 
+Customers can cancel requested or confirmed bookings online up to the cancellation window saved in admin settings (48 hours before departure or check-in by default). Cancelling a paid booking releases the held tour seats or room nights and queues a full refund automatically; refunds are sent manually outside the app and an administrator marks them paid in the admin portal. Refunds are tracked with a status (`none`, `pending`, `paid`, `rejected`), amount, reason, and request/payout timestamps.
+
+Discovery is data-driven rather than static. Verified (paid) bookings, guest ratings and published room rates feed every listing: `/api/catalogue`, `/api/search` and `/api/recommendations` expose a rating, review count, lifetime and 30-day booking counts, a starting price (the cheapest active room for stays), a price comparison against comparable listings, and `Top rated` / `Popular` / `Best value` badges. Search keeps text relevance first, adds a capped data boost so equally relevant listings are ordered by real demand and value, and supports `sort=relevance|price_low|price_high|rating|popular`. `/api/recommendations` returns similar listings when given a `slug` (same destination, style and price range) and trending listings otherwise, excluding the current result set. The admin operations payload adds a `price_insights` block with median prices, listings above or below the area average and paid revenue per listing.
+
 ## Testing
 
 ```bash
@@ -101,5 +105,5 @@ Push to `main` for production. Same-repository pull requests create preview depl
 - Use HTTPS in production and enable secure session cookies.
 - Keep PostgreSQL and Redis credentials outside the repository.
 - Daraja callback URLs must be public HTTPS URLs; payment success is confirmed through Daraja verification, not a browser redirect.
-- Uploads require an authenticated admin or vendor session, CSRF protection, safe filenames, and validated image signatures.
+- Uploads require an authenticated admin or partner session, CSRF protection, safe filenames, and validated image signatures.
 - Do not expose the development SQLite database, `.env`, or upload directory publicly.

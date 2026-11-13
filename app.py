@@ -15,7 +15,7 @@ import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import wraps
 from email.message import EmailMessage
 
@@ -25,7 +25,7 @@ from flask_limiter.util import get_remote_address
 from flask import Flask, redirect, request, send_file, send_from_directory, session
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-from sqlalchemy import case, text
+from sqlalchemy import case, or_, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -48,9 +48,42 @@ from saas.modules.bookings.service import (
     reserve_schedule,
     save_booking as save_booking_service,
 )
-from saas.modules.catalog.models import Destination, Property, Review, Tour, TourSchedule
-from saas.modules.identity.models import AdminAccount, User, VendorAccount
-from saas.modules.messaging.models import Submission
+from saas.modules.catalog.availability import (
+    check_in_cutoff,
+    clear_availability_day,
+    parse_stay_date,
+    release_room_nights,
+    reserve_room_nights,
+    room_calendar,
+    stay_nights,
+    stay_option,
+    update_availability_range,
+)
+from saas.modules.catalog.models import (
+    Destination,
+    Property,
+    PropertyAvailability,
+    PropertyRoom,
+    Promotion,
+    Review,
+    Service,
+    Tour,
+    TourSchedule,
+    PROMOTION_LISTING_TYPES,
+    PROMOTION_TIERS,
+    SERVICE_PRICE_UNITS,
+    SERVICE_TYPES,
+    TOUR_GROUP_TYPES,
+    TOUR_TYPES,
+)
+from saas.modules.identity.models import (
+    VENDOR_BUSINESS_TYPES,
+    AdminAccount,
+    SavedItem,
+    User,
+    VendorAccount,
+)
+from saas.modules.messaging.models import NewsletterSubscriber, Submission
 
 load_dotenv()
 
@@ -69,12 +102,29 @@ EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').lower() in ('1', 'true'
 whatsapp_phone = re.sub(r'\D', '', os.environ.get('WHATSAPP_BUSINESS_PHONE', ''))
 WHATSAPP_BUSINESS_PHONE = whatsapp_phone if 8 <= len(whatsapp_phone) <= 15 else ''
 SITE_URL = os.environ.get('SITE_URL', 'https://lamutours.2bd.net').strip().rstrip('/')
+SOCIAL_PROFILE_SETTINGS = (
+    ('Instagram', 'SOCIAL_INSTAGRAM_URL', 'instagram'),
+    ('Facebook', 'SOCIAL_FACEBOOK_URL', 'facebook'),
+    ('X', 'SOCIAL_X_URL', 'x'),
+    ('TikTok', 'SOCIAL_TIKTOK_URL', 'tiktok'),
+    ('YouTube', 'SOCIAL_YOUTUBE_URL', 'youtube'),
+)
 IS_VERCEL = os.environ.get('VERCEL') == '1'
 IS_PRODUCTION = (
     os.environ.get('FLASK_ENV', '').lower() == 'production'
     or IS_VERCEL
     or (bool(os.environ.get('SITE_URL')) and SITE_URL.startswith('https://'))
 )
+
+
+def social_profile_links():
+    """Public social profiles, configured through the SOCIAL_* environment variables."""
+    links = []
+    for label, setting, icon in SOCIAL_PROFILE_SETTINGS:
+        href = (os.environ.get(setting) or '').strip()
+        if href.startswith(('https://', 'http://')):
+            links.append({'label': label, 'href': href, 'icon': icon})
+    return links
 
 
 def warn_deployment_config(message):
@@ -224,6 +274,18 @@ def ensure_booking_payment_columns():
             connection.execute(text('ALTER TABLE booking ADD COLUMN commission_rate FLOAT NOT NULL DEFAULT 15.0'))
         if 'refund_status' not in booking_columns:
             connection.execute(text("ALTER TABLE booking ADD COLUMN refund_status VARCHAR(30) NOT NULL DEFAULT 'none'"))
+        if 'booking_type' not in booking_columns:
+            connection.execute(text("ALTER TABLE booking ADD COLUMN booking_type VARCHAR(20) NOT NULL DEFAULT 'tour'"))
+        if 'property_id' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN property_id INTEGER'))
+        if 'room_id' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN room_id INTEGER'))
+        if 'check_in' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN check_in VARCHAR(20)'))
+        if 'check_out' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN check_out VARCHAR(20)'))
+        if 'nights' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN nights INTEGER'))
         connection.execute(text(
             'CREATE UNIQUE INDEX IF NOT EXISTS uq_booking_payment_reference '
             'ON booking (payment_reference)'
@@ -247,15 +309,98 @@ def ensure_identity_columns():
                     connection.execute(text(f'ALTER TABLE {table} ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE'))
 
 
+def ensure_operator_columns():
+    """Attach public operator profiles to vendor accounts created earlier."""
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('vendor_account'):
+        return
+    vendor_columns = {column['name'] for column in inspector.get_columns('vendor_account')}
+    with db.engine.begin() as connection:
+        for column, declaration in {
+            'slug': 'VARCHAR(160)',
+            'business_types': "VARCHAR(255) NOT NULL DEFAULT ''",
+            'description': "TEXT NOT NULL DEFAULT ''",
+            'location': "VARCHAR(120) NOT NULL DEFAULT ''",
+            'phone': "VARCHAR(50) NOT NULL DEFAULT ''",
+            'website': "VARCHAR(255) NOT NULL DEFAULT ''",
+            'logo_url': 'VARCHAR(500)',
+        }.items():
+            if column not in vendor_columns:
+                connection.execute(text(f'ALTER TABLE vendor_account ADD COLUMN {column} {declaration}'))
+        connection.execute(text(
+            'CREATE UNIQUE INDEX IF NOT EXISTS uq_vendor_account_slug ON vendor_account (slug)'
+        ))
+
+    # Existing vendors need a stable public page before they can be linked to.
+    operators = VendorAccount.query.filter(
+        (VendorAccount.slug.is_(None)) | (VendorAccount.slug == '')
+    ).all()
+    for operator in operators:
+        operator.slug = unique_slug(operator.name, VendorAccount, operator.id)
+    if operators:
+        db.session.commit()
+
+
+def ensure_review_columns():
+    """Attach guest reviews to the booking and customer account that earned them."""
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('review'):
+        return
+    review_columns = {column['name'] for column in inspector.get_columns('review')}
+    with db.engine.begin() as connection:
+        if 'booking_id' not in review_columns:
+            connection.execute(text('ALTER TABLE review ADD COLUMN booking_id INTEGER'))
+        if 'user_id' not in review_columns:
+            connection.execute(text('ALTER TABLE review ADD COLUMN user_id INTEGER'))
+        connection.execute(text(
+            'CREATE UNIQUE INDEX IF NOT EXISTS uq_review_booking ON review (booking_id)'
+        ))
+
+
+def ensure_refund_columns():
+    """Track refunds owed after a cancellation and their manual payout."""
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('booking'):
+        return
+    booking_columns = {column['name'] for column in inspector.get_columns('booking')}
+    with db.engine.begin() as connection:
+        if 'refund_amount' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN refund_amount FLOAT NOT NULL DEFAULT 0.0'))
+        if 'refund_reason' not in booking_columns:
+            connection.execute(text("ALTER TABLE booking ADD COLUMN refund_reason VARCHAR(255) NOT NULL DEFAULT ''"))
+        if 'refund_requested_at' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN refund_requested_at TIMESTAMP'))
+        if 'refund_paid_at' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN refund_paid_at TIMESTAMP'))
+        # Earlier refund reviews move onto the payout vocabulary.
+        connection.execute(text(
+            "UPDATE booking SET refund_status = 'pending' "
+            "WHERE refund_status IN ('pending_review', 'approved')"
+        ))
+        connection.execute(text(
+            "UPDATE booking SET refund_status = 'paid' WHERE refund_status = 'completed'"
+        ))
+        connection.execute(text(
+            "UPDATE booking SET refund_amount = amount, "
+            "refund_reason = 'Refund paid before refund tracking was added.' "
+            "WHERE refund_status = 'paid' AND refund_amount = 0"
+        ))
+
+
 def ensure_admin_settings():
     changed = False
     for key, value in {
         'commission_rate': '15',
-        'refund_policy': 'manual_review',
+        'refund_policy': 'automatic',
         'cancellation_window_hours': '48',
     }.items():
-        if not db.session.get(AdminSetting, key):
+        setting = db.session.get(AdminSetting, key)
+        if not setting:
             db.session.add(AdminSetting(key=key, value=value))
+            changed = True
+        elif key == 'refund_policy' and setting.value != value:
+            # Refunds are automatic now; earlier databases stored a manual-review flag.
+            setting.value = value
             changed = True
     if changed:
         db.session.commit()
@@ -302,6 +447,10 @@ def ensure_catalog_columns():
             'min_group_size': 'INTEGER NOT NULL DEFAULT 1',
             'max_group_size': 'INTEGER NOT NULL DEFAULT 12',
             'destination': "VARCHAR(120) NOT NULL DEFAULT 'lamu'",
+            'tour_type': "VARCHAR(40) NOT NULL DEFAULT 'experience'",
+            'duration_days': 'INTEGER NOT NULL DEFAULT 1',
+            'languages': "TEXT NOT NULL DEFAULT ''",
+            'group_type': "VARCHAR(20) NOT NULL DEFAULT 'private'",
         }.items():
             if column not in tour_columns:
                 connection.execute(text(f'ALTER TABLE tour ADD COLUMN {column} {declaration}'))
@@ -316,6 +465,33 @@ def ensure_catalog_columns():
         property_listing.slug = unique_slug(property_listing.name, Property, property_listing.id)
     if properties:
         db.session.commit()
+
+    # Move listings created under the older type names onto the accommodation vocabulary.
+    legacy_types = tuple(LEGACY_PROPERTY_TYPES)
+    legacy_listings = Property.query.filter(db.func.lower(Property.property_type).in_(legacy_types)).all()
+    for property_listing in legacy_listings:
+        property_listing.property_type = normalize_property_type(property_listing.property_type)
+    if legacy_listings:
+        db.session.commit()
+
+    # Every property needs at least one room so it can be booked as a stay.
+    properties_with_rooms = {room.property_id for room in PropertyRoom.query.all()}
+    roomless_properties = [
+        property_listing for property_listing in Property.query.all()
+        if property_listing.id not in properties_with_rooms
+    ]
+    for property_listing in roomless_properties:
+        db.session.add(PropertyRoom(
+            property_id=property_listing.id,
+            name='Entire place',
+            description='',
+            guests=property_listing.guests,
+            base_rate=property_listing.price_per_night,
+            total_units=1,
+        ))
+    if roomless_properties:
+        db.session.commit()
+
     categories = {
         'dhow': 'Dhow & Island Hopping',
         'sandbank': 'Dhow & Island Hopping',
@@ -388,6 +564,10 @@ DEFAULT_TOURS = (
     # Amboseli
     ('amboseli-safari', 'Amboseli Elephant Safari', 'Spend a day with the elephant herds that gather below Kilimanjaro.', 'Full day', 16500, 'pictures/337169041.jpg', 'amboseli', 'Wildlife Safari'),
     ('amboseli-sunset', 'Amboseli Sunset Game Drive', 'An evening drive to the viewpoints facing the mountain.', '3 hours', 9000, 'pictures/354456403.jpg', 'amboseli', 'Wildlife Safari'),
+    # Tsavo
+    ('tsavo-game-drive', 'Tsavo Red-Elephant Safari', 'Track red-dusted elephants and lion between the waterholes and lava flows of Tsavo East.', 'Full day', 15500, 'images/tsavo-red-elephants.jpg', 'tsavo', 'Wildlife Safari'),
+    # Mount Kenya
+    ('mount-kenya-forest-trek', 'Mount Kenya Forest Trek', 'Walk the montane forest belt below the peaks with a guide, looking for colobus monkeys and giant heather.', 'Full day', 9500, 'images/mount-kenya-highlands.jpg', 'mount-kenya', 'Adventure & Nature'),
 )
 
 DEFAULT_TOUR_DETAILS = {
@@ -523,6 +703,77 @@ DEFAULT_TOUR_DETAILS = {
         'exclusions': 'Park entry fees\nDrinks and dinner\nGratuities',
         'pickup_point': 'Your Amboseli lodge',
     },
+    'tsavo-game-drive': {
+        'itinerary': '06:00–06:15 | Meet your guide at camp; Highlights: park and waterhole briefing\n06:15–09:30 | Morning game drive in Tsavo East; Highlights: red elephants and lion\n09:30–12:30 | Continue through the waterhole circuit; Highlights: baobabs and open plains\n12:30–13:30 | Picnic lunch under the trees; Highlights: shade and birdlife\n13:30–17:00 | Afternoon drive back towards camp; Highlights: golden-hour photography',
+        'inclusions': 'Game drive vehicle and resident guide\nPicnic lunch\nBottled water',
+        'exclusions': 'Park entry fees\nDrinks\nGratuities',
+        'pickup_point': 'Your Tsavo camp',
+    },
+    'mount-kenya-forest-trek': {
+        'itinerary': '07:30–07:45 | Meet your guide at the park gate; Highlights: mountain weather and route briefing\n07:45–10:30 | Walk the montane forest trails; Highlights: giant heather, bamboo and colobus monkeys\n10:30–12:30 | Climb to a highland viewpoint; Highlights: views towards the peaks\n12:30–13:30 | Picnic lunch on the ridge; Highlights: open highland scenery\n13:30–15:30 | Descend through farmland back to the gate',
+        'inclusions': 'Local mountain guide\nForest entry arrangement\nPicnic lunch',
+        'exclusions': 'Transport to the park gate\nDrinks\nPersonal hiking gear and gratuities',
+        'pickup_point': 'Mount Kenya forest gate',
+    },
+}
+
+# Overnight packages seeded so the catalogue covers multi-day safaris, not
+# only day experiences. Each row ends with the number of days.
+DEFAULT_PACKAGE_TOURS = (
+    (
+        'mara-3-day-safari',
+        '3-Day Maasai Mara Safari',
+        'Three days on the Mara plains with morning and evening game drives, full board in a tented camp, and a guide who knows the river crossings.',
+        '3 days · 2 nights',
+        78500,
+        'pictures/295463166.jpg',
+        'maasai-mara',
+        'Wildlife Safari',
+        3,
+    ),
+    (
+        'amboseli-tsavo-4-day',
+        '4-Day Amboseli & Tsavo Safari',
+        'Elephants below Kilimanjaro, then the red earth of Tsavo West. Four days of game drives, lodges with pools, and slow evenings under the mountain.',
+        '4 days · 3 nights',
+        96500,
+        'pictures/337169041.jpg',
+        'amboseli',
+        'Wildlife Safari',
+        4,
+    ),
+    (
+        'coast-to-mara-6-day',
+        '6-Day Coast to Mara Safari',
+        'The full Kenya trip in one itinerary: two days on the Swahili coast, a night in Nairobi, then three nights on the Mara plains.',
+        '6 days · 5 nights',
+        148000,
+        'pictures/295463173.jpg',
+        'maasai-mara',
+        'Wildlife Safari',
+        6,
+    ),
+)
+
+DEFAULT_PACKAGE_DETAILS = {
+    'mara-3-day-safari': {
+        'itinerary': 'Day 1 | Drive from Nairobi to the Mara with a Rift Valley stop; Highlights: escarpment views and an afternoon game drive\nDay 2 | Full day in the reserve with a picnic lunch; Highlights: big cats, river crossings and the Mara triangle\nDay 3 | Sunrise game drive and return to Nairobi; Highlights: golden-hour photography and a final sighting',
+        'inclusions': 'Two nights full board in a tented camp\nPark fees and conservancy levies\nGame drives in a 4x4 with a resident guide\nTransfers from Nairobi',
+        'exclusions': 'Drinks and personal items\nBalloon safari (booked separately)\nTravel insurance and gratuities',
+        'pickup_point': 'Your Nairobi hotel or Wilson Airport',
+    },
+    'amboseli-tsavo-4-day': {
+        'itinerary': 'Day 1 | Nairobi to Amboseli with an afternoon drive; Highlights: elephant herds below Kilimanjaro\nDay 2 | Morning and evening game drives in Amboseli; Highlights: observation hill and the swamps\nDay 3 | Transfer to Tsavo West and an afternoon drive; Highlights: Mzima Springs and the lava flows\nDay 4 | Sunrise drive and return to Nairobi; Highlights: red-earth scenery and a final game drive',
+        'inclusions': 'Three nights full board in lodges\nPark fees for both parks\nGame drives in a 4x4 with a guide\nTransfers from Nairobi',
+        'exclusions': 'Drinks and personal items\nOptional night drive\nTravel insurance and gratuities',
+        'pickup_point': 'Your Nairobi hotel',
+    },
+    'coast-to-mara-6-day': {
+        'itinerary': 'Day 1 | Arrive on the coast and settle in; Highlights: beach time and a sunset dhow sail\nDay 2 | A coast day at your own pace; Highlights: reef snorkelling or the old town\nDay 3 | Fly to Nairobi and overnight; Highlights: a city dinner and an early night\nDay 4 | Drive to the Mara with an afternoon drive; Highlights: the escarpment and first sightings\nDay 5 | Full day in the reserve; Highlights: big cats, river crossings and a picnic lunch\nDay 6 | Sunrise game drive and return to Nairobi; Highlights: final photography and transfers',
+        'inclusions': 'Five nights full board except coast breakfasts\nDomestic flight to Nairobi\nPark fees and game drives\nAirport and hotel transfers',
+        'exclusions': 'International flights\nDrinks and personal items\nBalloon safari and spa treatments\nTravel insurance and gratuities',
+        'pickup_point': 'Your coast hotel or Mombasa airport',
+    },
 }
 
 LEGACY_DEFAULT_ITINERARIES = {
@@ -548,48 +799,79 @@ LEGACY_DEFAULT_ITINERARIES = {
     'mara-balloon': 'Transfer to the launch site\nSunrise balloon flight and breakfast\nReturn to camp',
     'amboseli-safari': 'Meet your guide at the lodge\nGame drive in the park\nReturn to your lodge',
     'amboseli-sunset': 'Meet your guide\nEvening game drive to the viewpoints\nReturn to your lodge',
+    'tsavo-game-drive': 'Meet your guide at camp\nGame drive through the waterholes of Tsavo East\nReturn to camp',
+    'mount-kenya-forest-trek': 'Meet your guide at the forest gate\nTrek the montane forest belt\nReturn to the gate',
 }
 
 DEFAULT_PROPERTIES = (
     # Lamu
-    ('shela-guest-house', 'Shela Village Guest House', 'guest house', 'Shela, Lamu', 4500, 2, 'images/shela-village.webp', 'Comfortable guest house in Shela village.', 'lamu'),
+    ('shela-guest-house', 'Shela Village Guest House', 'rental', 'Shela, Lamu', 4500, 2, 'images/shela-village.webp', 'Comfortable guest house in Shela village.', 'lamu'),
     ('old-town-hotel', 'Old Town Swahili Hotel', 'hotel', 'Lamu Old Town', 6500, 3, "images/Lamu_Fort_Museum's.jpg", 'A Swahili hotel close to the history and culture of Lamu Old Town.', 'lamu'),
-    ('manda-beach-home', 'Manda Island Beach Home', 'home', 'Manda Island, Lamu', 10000, 5, 'images/Lamu_coast.jpg', 'An island home with spacious ocean views.', 'lamu'),
-    ('shela-palm-villa', 'Shela Palm Villa', 'villa', 'Shela, Lamu', 12500, 4, 'pictures/187747945.jpg', 'A private villa close to Shela beach.', 'lamu'),
+    ('manda-beach-home', 'Manda Island Beach Home', 'rental', 'Manda Island, Lamu', 10000, 5, 'images/Lamu_coast.jpg', 'An island home with spacious ocean views.', 'lamu'),
+    ('shela-palm-villa', 'Shela Palm Villa', 'rental', 'Shela, Lamu', 12500, 4, 'pictures/187747945.jpg', 'A private villa close to Shela beach.', 'lamu'),
     ('mjini-budget-hotel', 'Mjini Budget Hotel', 'hotel', 'Lamu Mjini', 5500, 2, 'pictures/292079957.jpg', 'An affordable hotel in the heart of Lamu town.', 'lamu'),
-    ('kipungani-guest-house', 'Kipungani Coast Guest House', 'guest house', 'Kipungani, Lamu', 5000, 3, 'pictures/611137747.jpg', 'A quiet guest house along the Kipungani coast.', 'lamu'),
-    ('manda-ocean-villa', 'Manda Ocean Villa', 'villa', 'Manda Island, Lamu', 16000, 6, 'pictures/552000169.jpg', 'A private ocean villa on Manda Island.', 'lamu'),
+    ('kipungani-guest-house', 'Kipungani Coast Guest House', 'rental', 'Kipungani, Lamu', 5000, 3, 'pictures/611137747.jpg', 'A quiet guest house along the Kipungani coast.', 'lamu'),
+    ('manda-ocean-villa', 'Manda Ocean Villa', 'rental', 'Manda Island, Lamu', 16000, 6, 'pictures/552000169.jpg', 'A private ocean villa on Manda Island.', 'lamu'),
     # Mombasa
     ('nyali-beach-hotel', 'Nyali Beach Hotel', 'hotel', 'Nyali, Mombasa', 9500, 2, 'pictures/292080012.jpg', 'Ocean-view rooms minutes from the reef and the city centre.', 'mombasa'),
-    ('mombasa-old-town-house', 'Old Town Swahili House', 'guest house', 'Mombasa Old Town', 5200, 2, 'pictures/292079967.jpg', 'A restored Swahili house a short walk from Fort Jesus.', 'mombasa'),
+    ('mombasa-old-town-house', 'Old Town Swahili House', 'rental', 'Mombasa Old Town', 5200, 2, 'pictures/292079967.jpg', 'A restored Swahili house a short walk from Fort Jesus.', 'mombasa'),
     # Diani
-    ('diani-sands-villa', 'Diani Sands Villa', 'villa', 'Diani Beach', 15000, 6, 'pictures/497804782.jpg', 'A private villa a few steps from the white sand.', 'diani'),
-    ('diani-garden-home', 'Diani Garden Home', 'home', 'Diani Beach', 7800, 4, 'pictures/464889964.jpg', 'A garden home with a shaded veranda near the beach path.', 'diani'),
+    ('diani-sands-villa', 'Diani Sands Villa', 'rental', 'Diani Beach', 15000, 6, 'pictures/497804782.jpg', 'A private villa a few steps from the white sand.', 'diani'),
+    ('diani-garden-home', 'Diani Garden Home', 'rental', 'Diani Beach', 7800, 4, 'pictures/464889964.jpg', 'A garden home with a shaded veranda near the beach path.', 'diani'),
     # Watamu
     ('watamu-bay-hotel', 'Watamu Bay Hotel', 'hotel', 'Watamu', 8800, 2, 'pictures/498623900.jpg', 'A bay-front hotel with easy access to the marine park.', 'watamu'),
-    ('mida-creek-home', 'Mida Creek Home', 'home', 'Mida Creek, Watamu', 9900, 5, 'pictures/498623923.jpg', 'A quiet home overlooking the mangroves of Mida Creek.', 'watamu'),
+    ('mida-creek-home', 'Mida Creek Home', 'rental', 'Mida Creek, Watamu', 9900, 5, 'pictures/498623923.jpg', 'A quiet home overlooking the mangroves of Mida Creek.', 'watamu'),
     # Nairobi
     ('westlands-city-hotel', 'Westlands City Hotel', 'hotel', 'Westlands, Nairobi', 11500, 2, 'pictures/772777040.jpg', 'A central hotel close to restaurants and business districts.', 'nairobi'),
-    ('karen-garden-villa', 'Karen Garden Villa', 'villa', 'Karen, Nairobi', 18500, 6, 'pictures/772777142.jpg', 'A leafy villa with a private garden on the city edge.', 'nairobi'),
+    ('karen-garden-villa', 'Karen Garden Villa', 'rental', 'Karen, Nairobi', 18500, 6, 'pictures/772777142.jpg', 'A leafy villa with a private garden on the city edge.', 'nairobi'),
     # Lake Naivasha
-    ('naivasha-lake-lodge', 'Lake Naivasha Lodge', 'guest house', 'Lake Naivasha', 7400, 3, 'pictures/882985623.jpg', 'A lakeside lodge with acacia views and abundant birdlife.', 'naivasha'),
+    ('naivasha-lake-lodge', 'Lake Naivasha Lodge', 'rental', 'Lake Naivasha', 7400, 3, 'pictures/882985623.jpg', 'A lakeside lodge with acacia views and abundant birdlife.', 'naivasha'),
     # Maasai Mara
-    ('mara-savannah-camp', 'Mara Savannah Camp', 'home', 'Maasai Mara', 22000, 2, 'pictures/295463166.jpg', 'A tented camp on the edge of the open plains.', 'maasai-mara'),
+    ('mara-savannah-camp', 'Mara Savannah Camp', 'rental', 'Maasai Mara', 22000, 2, 'pictures/295463166.jpg', 'A tented camp on the edge of the open plains.', 'maasai-mara'),
     ('mara-river-lodge', 'Mara River Lodge', 'hotel', 'Maasai Mara', 26500, 4, 'pictures/295463173.jpg', 'A river-front lodge with guiding included.', 'maasai-mara'),
     # Amboseli
     ('amboseli-view-lodge', 'Amboseli View Lodge', 'hotel', 'Amboseli', 17500, 3, 'pictures/337169041.jpg', 'Rooms facing the mountain and the elephant corridors.', 'amboseli'),
+    # Tsavo
+    ('tsavo-red-earth-camp', 'Tsavo Red Earth Camp', 'lodge', 'Tsavo East', 16500, 3, 'images/tsavo-red-elephants.jpg', 'A tented camp on the edge of Tsavo East, with waterhole views.', 'tsavo'),
+    ('voi-station-rest', 'Voi Station Rest', 'rental', 'Voi, Tsavo', 6300, 4, 'images/tsavo-red-elephants.jpg', 'A simple, well-placed base for early starts into Tsavo.', 'tsavo'),
+    # Mount Kenya
+    ('nanyuki-highlands-lodge', 'Nanyuki Highlands Lodge', 'lodge', 'Nanyuki, Mount Kenya', 14500, 4, 'images/mount-kenya-highlands.jpg', 'A highland lodge with mountain views and a fireplace for cold evenings.', 'mount-kenya'),
+    ('naro-moru-forest-cabin', 'Naro Moru Forest Cabin', 'rental', 'Naro Moru, Mount Kenya', 6800, 2, 'images/mount-kenya-highlands.jpg', 'A timber cabin on the forest edge, a short drive from the park gate.', 'mount-kenya'),
 )
+
+# Accommodation types offered when listing or filtering a property.
+PROPERTY_TYPES = ('hotel', 'lodge', 'resort', 'apartment', 'rental', 'hostel')
+# Listings created before this vocabulary was introduced are mapped onto it.
+LEGACY_PROPERTY_TYPES = {'home': 'rental', 'guest house': 'rental', 'villa': 'rental'}
+
+
+def normalize_property_type(value):
+    property_type = str(value or '').strip().lower()
+    return LEGACY_PROPERTY_TYPES.get(property_type, property_type)
+
 
 DEFAULT_DESTINATIONS = (
     ('lamu', 'Lamu', 'Car-free Swahili streets, dhow sails and quiet island beaches.', 'images/shela-lamu-kenya-09.jpg', 'Lamu'),
     ('mombasa', 'Mombasa', 'Fort Jesus, spice markets and a lively Indian Ocean port city.', 'pictures/292080012.jpg', 'Mombasa'),
-    ('diani', 'Diani Beach', 'Powder-white sand, reef snorkelling and relaxed beach stays.', 'pictures/497804782.jpg', 'Diani'),
+    ('diani', 'Diani Beach', 'Powder-white sand, reef snorkelling and relaxed beach accommodation.', 'pictures/497804782.jpg', 'Diani'),
     ('watamu', 'Watamu', 'Marine park reefs, turtle beaches and the Gede ruins.', 'pictures/498623900.jpg', 'Watamu'),
     ('nairobi', 'Nairobi', 'A capital where wildlife parks meet museums and coffee culture.', 'pictures/772777040.jpg', 'Nairobi'),
     ('naivasha', 'Lake Naivasha', 'Boat safaris, hippo shores and the cliffs of Hell’s Gate.', 'pictures/882985623.jpg', 'Naivasha'),
+    ('mount-kenya', 'Mount Kenya', 'Snow-capped peaks, montane forest and highland farms around Nanyuki and Naro Moru.', 'images/mount-kenya-highlands.jpg', 'Nanyuki'),
     ('maasai-mara', 'Maasai Mara', 'Big-cat plains and the great migration on open savannah.', 'pictures/295463166.jpg', 'Mara'),
     ('amboseli', 'Amboseli', 'Elephant herds beneath the snows of Kilimanjaro.', 'pictures/337169041.jpg', 'Amboseli'),
+    ('tsavo', 'Tsavo', 'Red elephants, lava flows and wide waterhole country between Nairobi and the coast.', 'images/tsavo-red-elephants.jpg', 'Tsavo'),
 )
+
+# Paid placements the marketplace runs on its own inventory. They demonstrate
+# the sponsored slot on a fresh install and can be paused from the dashboard;
+# seeding never rewrites an existing campaign, so an admin edit always wins.
+DEFAULT_PROMOTIONS = (
+    ('tour', 'mombasa-dhow-sunset', 'spotlight', 'Sunset dhow sailing', 45),
+    ('property', 'shela-palm-villa', 'featured', 'Shela beach villa', 45),
+)
+# Hard ceiling on simultaneous live campaigns so sponsored slots stay scarce.
+PROMOTION_MAX_ACTIVE = 6
 
 # Placeholder pickup points written by older seeds; matched so they can be
 # upgraded to the operator-specific value in DEFAULT_TOUR_DETAILS.
@@ -690,6 +972,59 @@ def seed_catalogue():
                 listing.owner_name = DEFAULT_OWNER_NAME
                 changed = True
 
+    for slug, name, description, duration, price, image_url, destination, category, days in DEFAULT_PACKAGE_TOURS:
+        tour = db.session.get(Tour, slug)
+        if not tour:
+            tour = Tour(
+                slug=slug,
+                name=name,
+                description=description,
+                duration=duration,
+                price=price,
+                image_url=image_url,
+                destination=destination,
+                category=category,
+                tour_type='multi-day-safari',
+                duration_days=days,
+                group_type='shared',
+            )
+            db.session.add(tour)
+            changed = True
+        else:
+            if tour.tour_type != 'multi-day-safari':
+                tour.tour_type = 'multi-day-safari'
+                changed = True
+            if (tour.duration_days or 1) < 2:
+                tour.duration_days = days
+                changed = True
+        package = DEFAULT_PACKAGE_DETAILS[slug]
+        if not tour.itinerary:
+            tour.itinerary = package['itinerary']
+            changed = True
+        if not tour.inclusions:
+            tour.inclusions = package['inclusions']
+            changed = True
+        if not tour.exclusions:
+            tour.exclusions = package['exclusions']
+            changed = True
+        if not tour.pickup_point or tour.pickup_point in LEGACY_PICKUP_POINTS:
+            tour.pickup_point = package['pickup_point']
+            changed = True
+        # Give the packages published departures so they can be booked online.
+        if not TourSchedule.query.filter_by(tour_slug=slug).first():
+            first_start = datetime.now(KENYA_TIMEZONE).replace(
+                tzinfo=None, hour=7, minute=0, second=0, microsecond=0
+            ) + timedelta(days=14)
+            for index in range(12):
+                db.session.add(TourSchedule(
+                    tour_slug=slug,
+                    starts_at=first_start + timedelta(days=14 * index),
+                    capacity=8,
+                    booked_count=0,
+                    is_active=True,
+                ))
+            changed = True
+
     for slug, name, description, image_url, search_location in DEFAULT_DESTINATIONS:
         if not db.session.get(Destination, slug):
             db.session.add(Destination(
@@ -705,6 +1040,27 @@ def seed_catalogue():
         if retired:
             db.session.delete(retired)
             changed = True
+    today = datetime.now(KENYA_TIMEZONE).date()
+    for listing_type, listing_slug, tier, headline, days in DEFAULT_PROMOTIONS:
+        if Promotion.query.filter_by(listing_type=listing_type, listing_slug=listing_slug).first():
+            continue
+        listing = (
+            db.session.get(Tour, listing_slug) if listing_type == 'tour'
+            else Property.query.filter_by(slug=listing_slug).first()
+        )
+        if not listing:
+            continue
+        db.session.add(Promotion(
+            listing_type=listing_type,
+            listing_slug=listing_slug,
+            tier=tier,
+            headline=headline,
+            starts_on=today,
+            ends_on=today + timedelta(days=days),
+            impressions=0,
+            clicks=0,
+        ))
+        changed = True
     if changed or db.session.new or db.session.dirty:
         db.session.commit()
 
@@ -780,8 +1136,8 @@ def vendor_required(view):
     def wrapped(*args, **kwargs):
         if not is_vendor_logged_in():
             if request.path.startswith('/api/'):
-                return {'error': 'Vendor sign-in is required.'}, 401
-            return redirect('/vendor/login')
+                return {'error': 'Partner sign-in is required.'}, 401
+            return redirect('/partner/login')
         return view(*args, **kwargs)
     return wrapped
 
@@ -832,7 +1188,7 @@ def require_customer_csrf():
 
 
 def require_vendor_registration_csrf():
-    return _require_csrf('vendor_registration_csrf', 'Refresh the page before creating a vendor account.')
+    return _require_csrf('vendor_registration_csrf', 'Refresh the page before creating a partner account.')
 
 
 def safe_image_url(value):
@@ -861,7 +1217,10 @@ def initialize_database():
         db.create_all()
         ensure_booking_payment_columns()
         ensure_identity_columns()
+        ensure_operator_columns()
         ensure_catalog_columns()
+        ensure_review_columns()
+        ensure_refund_columns()
         ensure_admin_settings()
         seed_catalogue()
         bootstrap_admin_account()
@@ -950,10 +1309,338 @@ def _callback_metadata(callback):
     }
 
 
+def release_booking_availability(booking):
+    """Return the held inventory when a booking fails or is cancelled."""
+    if booking.booking_type == 'property' and booking.room_id:
+        room = db.session.get(PropertyRoom, booking.room_id)
+        if room is not None:
+            release_room_nights(room, booking.check_in, booking.check_out)
+        return
+    release_schedule(booking.schedule_id, booking.guests)
+
+
+def booking_listing_name(booking):
+    if booking.booking_type == 'property':
+        listing = Property.query.filter_by(slug=booking.tour).first()
+        return listing.name if listing else booking.tour.replace('-', ' ').title()
+    tour = db.session.get(Tour, booking.tour)
+    return tour.name if tour else booking.tour.replace('-', ' ').title()
+
+
+def booking_room_name(booking):
+    if not booking.room_id:
+        return ''
+    room = db.session.get(PropertyRoom, booking.room_id)
+    return room.name if room else ''
+
+
+REFUND_TRANSITIONS = {
+    'none': {'pending'},
+    'pending': {'paid', 'rejected'},
+    'rejected': {'pending'},
+    'paid': set(),
+}
+REFUND_STATUS_LABELS = {
+    'none': 'No refund',
+    'pending': 'Refund due',
+    'paid': 'Refund paid',
+    'rejected': 'Refund declined',
+}
+
+
+def queue_booking_refund(booking, reason):
+    """Record the full refund owed to the customer for a cancelled booking."""
+    booking.refund_status = 'pending'
+    booking.refund_amount = float(booking.amount or 0)
+    booking.refund_reason = reason
+    booking.refund_requested_at = datetime.utcnow()
+    booking.refund_paid_at = None
+
+
+def queue_cancellation_refund(booking, actor):
+    """Queue the automatic full refund for a paid booking that was just cancelled."""
+    if booking.payment_status != 'paid' or float(booking.amount or 0) <= 0:
+        return False
+    if booking.refund_status != 'none':
+        return False
+    queue_booking_refund(
+        booking,
+        f'Booking cancelled by the {actor}; the full amount is refundable.',
+    )
+    return True
+
+
+def mark_booking_refund_paid(booking):
+    """Record a refund the team sent outside the app."""
+    booking.refund_status = 'paid'
+    booking.refund_amount = float(booking.refund_amount or booking.amount or 0)
+    booking.refund_paid_at = datetime.utcnow()
+    booking.payment_status = 'refunded'
+
+
+STAY_CHECK_OUT_HOUR = 10
+REVIEW_BLOCKED_MESSAGES = {
+    'reviewed': 'You already reviewed this booking. Thank you!',
+    'ineligible': 'Only paid bookings that were used can be reviewed.',
+    'upcoming': 'You can review this booking once the experience or stay is over.',
+}
+
+
+def booking_review_target(booking):
+    """Return the listing type, slug and name a booking should be reviewed against."""
+    if booking.booking_type == 'property':
+        listing = Property.query.filter_by(slug=booking.tour).first()
+        return ('property', listing.slug, listing.name) if listing else (None, None, None)
+    tour = db.session.get(Tour, booking.tour)
+    return ('tour', tour.slug, tour.name) if tour else (None, None, None)
+
+
+def booking_service_end(booking):
+    """Return the local time the booked experience or stay finishes."""
+    if booking.booking_type == 'property':
+        if not booking.check_out:
+            return None
+        try:
+            check_out = parse_stay_date(booking.check_out)
+        except ValueError:
+            return None
+        return datetime.combine(check_out, datetime.min.time()).replace(hour=STAY_CHECK_OUT_HOUR)
+    try:
+        return datetime.strptime(f'{booking.date} {booking.time}', '%Y-%m-%d %H:%M')
+    except (TypeError, ValueError):
+        return None
+
+
+def review_capability(booking, review):
+    """Return (can_review, reason) for a booking the customer already paid for."""
+    if review is not None:
+        return False, 'reviewed'
+    if booking.status == 'cancelled' or booking.payment_status != 'paid':
+        return False, 'ineligible'
+    if booking.status == 'completed':
+        return True, 'ready'
+    ended = booking_service_end(booking)
+    if ended is not None and ended <= datetime.now(KENYA_TIMEZONE).replace(tzinfo=None):
+        return True, 'ready'
+    return False, 'upcoming'
+
+
+def booking_review_state(booking):
+    review = Review.query.filter_by(booking_id=booking.id).first()
+    can_review, reason = review_capability(booking, review)
+    return can_review, reason, review
+
+
+def review_blocked_message(reason):
+    return REVIEW_BLOCKED_MESSAGES.get(reason, 'This booking cannot be reviewed yet.')
+
+
+def review_ratings(target_type, target_ids=None):
+    """Average rating and review count for each listing slug."""
+    query = db.session.query(
+        Review.target_id,
+        db.func.count(Review.id),
+        db.func.avg(Review.rating),
+    ).filter(Review.target_type == target_type)
+    if target_ids is not None:
+        target_ids = [target_id for target_id in target_ids if target_id]
+        if not target_ids:
+            return {}
+        query = query.filter(Review.target_id.in_(target_ids))
+    return {
+        target_id: {'rating': round(float(average or 0), 1), 'review_count': int(count)}
+        for target_id, count, average in query.group_by(Review.target_id).all()
+    }
+
+
+DISCOVERY_RECENT_DAYS = 30
+DISCOVERY_PRICE_BAND = 0.1
+DISCOVERY_PRICE_PEER_MIN_SIZE = 3
+DISCOVERY_TOP_RATED_MIN_REVIEWS = 2
+DISCOVERY_POPULAR_MIN_BOOKINGS = 3
+DISCOVERY_POPULAR_MIN_RECENT = 2
+
+
+def paid_booking_signals():
+    """Lifetime and recent verified booking counts for every listing."""
+    recent_since = datetime.utcnow() - timedelta(days=DISCOVERY_RECENT_DAYS)
+    rows = db.session.query(
+        Booking.tour,
+        db.func.count(Booking.id),
+        db.func.coalesce(db.func.sum(case((Booking.created_at >= recent_since, 1), else_=0)), 0),
+    ).filter(Booking.payment_status == 'paid').group_by(Booking.tour).all()
+    return {
+        slug: {'paid_bookings': int(total or 0), 'recent_bookings': int(recent or 0)}
+        for slug, total, recent in rows
+        if slug
+    }
+
+
+def room_rate_ranges():
+    """Lowest and highest active nightly rate published for each property."""
+    rows = db.session.query(
+        PropertyRoom.property_id,
+        db.func.min(PropertyRoom.base_rate),
+        db.func.max(PropertyRoom.base_rate),
+        db.func.count(PropertyRoom.id),
+    ).filter(
+        PropertyRoom.is_active.is_(True),
+        PropertyRoom.base_rate > 0,
+    ).group_by(PropertyRoom.property_id).all()
+    return {
+        property_id: {
+            'price_from': int(lowest or 0),
+            'price_to': int(highest or 0),
+            'room_types': int(room_count or 0),
+        }
+        for property_id, lowest, highest, room_count in rows
+    }
+
+
+def median_price(values):
+    ordered = sorted(float(value) for value in values if value and float(value) > 0)
+    if not ordered:
+        return 0.0
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def price_comparison(price, peers, label=''):
+    """Compare a listing's starting price with the median of comparable listings."""
+    peer_median = median_price(peers)
+    starting_price = float(price or 0)
+    if not starting_price or not peer_median:
+        return {
+            'median': round(peer_median),
+            'difference_percent': 0.0,
+            'position': 'unknown',
+            'label': label,
+        }
+    difference = (starting_price - peer_median) / peer_median
+    if difference <= -DISCOVERY_PRICE_BAND:
+        position = 'below'
+    elif difference >= DISCOVERY_PRICE_BAND:
+        position = 'above'
+    else:
+        position = 'typical'
+    return {
+        'median': round(peer_median),
+        'difference_percent': round(difference * 100, 1),
+        'position': position,
+        'label': label,
+    }
+
+
+def listing_badges(*, rating, review_count, paid_bookings, recent_bookings, comparison):
+    """Honest, data-backed labels shown next to listings."""
+    badges = []
+    if review_count >= DISCOVERY_TOP_RATED_MIN_REVIEWS and rating >= 4.5:
+        badges.append('Top rated')
+    if paid_bookings >= DISCOVERY_POPULAR_MIN_BOOKINGS or recent_bookings >= DISCOVERY_POPULAR_MIN_RECENT:
+        badges.append('Popular')
+    if comparison['position'] == 'below' and (review_count == 0 or rating >= 4.0):
+        badges.append('Best value')
+    return badges
+
+
+def catalogue_insights():
+    """Ratings, verified demand and price positioning for every listing.
+
+    These signals steer search ranking, recommendations and price display so the
+    marketplace reacts to what travelers actually book instead of static order.
+    """
+    tours = Tour.query.all()
+    properties = Property.query.all()
+    destination_names = {item.slug: item.name for item in Destination.query.all()}
+    tour_ratings = review_ratings('tour', [tour.slug for tour in tours])
+    property_ratings = review_ratings('property', [listing.slug for listing in properties if listing.slug])
+    demand = paid_booking_signals()
+    rates = room_rate_ranges()
+
+    tour_prices = []
+    tours_by_destination = {}
+    for tour in tours:
+        price = float(tour.price or 0)
+        if price > 0:
+            tour_prices.append(price)
+            tours_by_destination.setdefault(tour.destination, []).append(price)
+
+    property_starting_prices = {}
+    property_prices = []
+    properties_by_destination = {}
+    for listing in properties:
+        rate = rates.get(listing.id) or {}
+        starting = float(rate.get('price_from') or listing.price_per_night or 0)
+        property_starting_prices[listing.slug] = starting
+        if starting > 0:
+            property_prices.append(starting)
+            properties_by_destination.setdefault(listing.destination, []).append(starting)
+
+    def peer_group(groups, key, all_prices):
+        group = groups.get(key) or []
+        if len(group) >= DISCOVERY_PRICE_PEER_MIN_SIZE:
+            return group, destination_names.get(key, '')
+        return all_prices, ''
+
+    insights = {'tours': {}, 'properties': {}}
+    for tour in tours:
+        rating = tour_ratings.get(tour.slug, {'rating': 0, 'review_count': 0})
+        signal = demand.get(tour.slug, {})
+        peers, label = peer_group(tours_by_destination, tour.destination, tour_prices)
+        comparison = price_comparison(tour.price, peers, label)
+        insights['tours'][tour.slug] = {
+            'rating': rating['rating'],
+            'review_count': rating['review_count'],
+            'paid_bookings': signal.get('paid_bookings', 0),
+            'recent_bookings': signal.get('recent_bookings', 0),
+            'price_from': int(tour.price or 0),
+            'price_to': int(tour.price or 0),
+            'room_types': 0,
+            'price_comparison': comparison,
+            'badges': listing_badges(
+                rating=rating['rating'],
+                review_count=rating['review_count'],
+                paid_bookings=signal.get('paid_bookings', 0),
+                recent_bookings=signal.get('recent_bookings', 0),
+                comparison=comparison,
+            ),
+        }
+
+    for listing in properties:
+        if not listing.slug:
+            continue
+        rating = property_ratings.get(listing.slug, {'rating': 0, 'review_count': 0})
+        signal = demand.get(listing.slug, {})
+        rate = rates.get(listing.id) or {}
+        starting = property_starting_prices.get(listing.slug) or float(listing.price_per_night or 0)
+        peers, label = peer_group(properties_by_destination, listing.destination, property_prices)
+        comparison = price_comparison(starting, peers, label)
+        insights['properties'][listing.slug] = {
+            'rating': rating['rating'],
+            'review_count': rating['review_count'],
+            'paid_bookings': signal.get('paid_bookings', 0),
+            'recent_bookings': signal.get('recent_bookings', 0),
+            'price_from': int(starting),
+            'price_to': int(rate.get('price_to') or starting),
+            'room_types': int(rate.get('room_types') or 0),
+            'price_comparison': comparison,
+            'badges': listing_badges(
+                rating=rating['rating'],
+                review_count=rating['review_count'],
+                paid_bookings=signal.get('paid_bookings', 0),
+                recent_bookings=signal.get('recent_bookings', 0),
+                comparison=comparison,
+            ),
+        }
+    return insights
+
+
 def _release_failed_mpesa_booking(booking: Booking, result_description: str):
     if booking.payment_status != 'pending':
         return
-    release_schedule(booking.schedule_id, booking.guests)
+    release_booking_availability(booking)
     booking.payment_status = 'failed'
     booking.status = 'cancelled'
     db.session.commit()
@@ -1028,28 +1715,65 @@ def process_daraja_callback(payload):
         or not receipt
         or amount != int(round(booking.amount))
         or phone_number != booking.phone.removeprefix('+')
-        or booking.status == 'cancelled'
     ):
         app.logger.error('Daraja payment details did not match booking %s.', booking.id)
         return 'Payment details did not match booking', 400
 
+    cancelled = booking.status == 'cancelled'
     booking.payment_status = 'paid'
-    booking.status = 'confirmed'
+    if not cancelled:
+        booking.status = 'confirmed'
     booking.mpesa_receipt_number = receipt
     booking.payment_confirmed_at = datetime.utcnow()
+    if cancelled:
+        queue_booking_refund(
+            booking,
+            'Payment was confirmed after the booking was cancelled, so the full amount is refundable.',
+        )
     try:
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
         app.logger.exception('Daraja receipt could not be uniquely assigned to booking %s.', booking.id)
         return 'Payment receipt was already processed', 409
-    send_booking_confirmation(booking, payment_confirmed=True)
+    if cancelled:
+        app.logger.warning(
+            'Booking %s was paid after cancellation; refund queued for manual payout.', booking.id
+        )
+        send_refund_notification(booking, paid=False)
+    else:
+        send_booking_confirmation(booking, payment_confirmed=True)
     return '', 204
 
 
+def send_email_message(message: EmailMessage, *, context: str) -> bool:
+    """Deliver an EmailMessage through the configured SMTP transport."""
+    if not (EMAIL_HOST and EMAIL_USERNAME and EMAIL_PASSWORD and EMAIL_FROM):
+        app.logger.warning('Email skipped (%s): missing SMTP configuration.', context)
+        return False
+    try:
+        if EMAIL_USE_SSL:
+            with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
+                server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
+                server.ehlo()
+                if EMAIL_USE_TLS:
+                    server.starttls()
+                    server.ehlo()
+                server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
+                server.send_message(message)
+    except Exception:
+        app.logger.exception('Failed to send email (%s).', context)
+        return False
+    app.logger.info('Email sent (%s).', context)
+    return True
+
+
 def send_email_notification(submission: dict) -> bool:
-    if not (EMAIL_HOST and EMAIL_USERNAME and EMAIL_PASSWORD and EMAIL_FROM and EMAIL_TO):
-        app.logger.warning('Email notification skipped: missing SMTP configuration.')
+    if not EMAIL_TO:
+        app.logger.warning('Email notification skipped: missing EMAIL_TO configuration.')
         return False
 
     message = EmailMessage()
@@ -1064,24 +1788,7 @@ def send_email_notification(submission: dict) -> bool:
         f"Sent at: {submission['timestamp']}\n"
     )
 
-    try:
-        if EMAIL_USE_SSL:
-            with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
-                server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
-                server.send_message(message)
-        else:
-            with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
-                server.ehlo()
-                if EMAIL_USE_TLS:
-                    server.starttls()
-                    server.ehlo()
-                server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
-                server.send_message(message)
-        app.logger.info('Email notification sent to %s', EMAIL_TO)
-        return True
-    except Exception as exc:
-        app.logger.error('Failed to send email notification: %s', exc)
-        return False
+    return send_email_message(message, context=f'contact message from {submission["email"]}')
 
 
 def generate_booking_document(booking: Booking, document_type: str) -> bytes:
@@ -1119,11 +1826,24 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
         ('Booking reference', f'#{booking.id}'),
         ('Customer', booking.name),
         ('Email', booking.email),
-        ('Experience', booking.tour.replace('-', ' ').title()),
-        ('Date and time', f'{booking.date} at {booking.time} (Lamu time)'),
+    ]
+    if booking.booking_type == 'property':
+        rows.extend([
+            ('Accommodation', booking_listing_name(booking)),
+            ('Room', booking_room_name(booking) or 'Room'),
+            ('Check-in', booking.check_in or booking.date),
+            ('Check-out', booking.check_out or ''),
+            ('Nights', str(booking.nights or '')),
+        ])
+    else:
+        rows.extend([
+            ('Experience', booking_listing_name(booking)),
+            ('Date and time', f'{booking.date} at {booking.time} (Lamu time)'),
+        ])
+    rows.extend([
         ('Guests', str(booking.guests)),
         ('Payment status', booking.payment_status.replace('_', ' ').title()),
-    ]
+    ])
     if document_type == 'receipt':
         rows.extend([
             ('Payment method', 'M-Pesa'),
@@ -1145,7 +1865,11 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
     y -= 30
     document.setFont('Helvetica', 10)
     document.setFillColorRGB(0.35, 0.40, 0.37)
-    document.drawString(72, y, safe_text(f'{booking.guests} guest(s) - {booking.tour.replace("-", " ").title()}'))
+    if booking.booking_type == 'property':
+        summary = f'{booking_room_name(booking) or "Room"} · {booking.nights} night(s) · {booking.guests} guest(s)'
+    else:
+        summary = f'{booking.guests} guest(s) - {booking_listing_name(booking)}'
+    document.drawString(72, y, safe_text(summary))
     document.setFont('Helvetica-Bold', 12)
     document.setFillColorRGB(0.13, 0.25, 0.22)
     document.drawRightString(540, y, f'KSh {booking.amount:,.0f}')
@@ -1164,19 +1888,29 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
 
 
 def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> bool:
-    if not (EMAIL_HOST and EMAIL_USERNAME and EMAIL_PASSWORD and EMAIL_FROM):
-        app.logger.warning('Booking confirmation email skipped: missing SMTP configuration.')
-        return False
-
+    listing_name = booking_listing_name(booking)
+    if booking.booking_type == 'property':
+        booking_details = (
+            f"Accommodation: {listing_name}\n"
+            f"Room: {booking_room_name(booking) or 'Room'}\n"
+            f"Check-in: {booking.check_in}\n"
+            f"Check-out: {booking.check_out}\n"
+            f"Nights: {booking.nights}\n"
+        )
+    else:
+        booking_details = (
+            f"Experience: {listing_name}\n"
+            f"Date and time: {booking.date} at {booking.time} (Kenya time)\n"
+        )
     message = EmailMessage()
     message['Subject'] = f"Payment confirmed for booking #{booking.id}" if payment_confirmed else f"Booking request #{booking.id} received"
     message['From'] = EMAIL_FROM
     message['To'] = booking.email
     message.set_content(
         f"Hello {booking.name},\n\n"
-        f"We received your booking request for {booking.tour.replace('-', ' ').title()}.\n"
-        f"Date and time: {booking.date} at {booking.time} (Kenya time)\n"
-        f"Guests: {booking.guests}\n"
+        f"We received your booking request for {listing_name}.\n"
+        + booking_details
+        + f"Guests: {booking.guests}\n"
         f"Estimated total: KSh {booking.amount:,.0f}\n"
         f"Booking status: {booking.status}\n"
         + (
@@ -1194,30 +1928,22 @@ def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> b
             message.add_attachment(receipt, maintype='application', subtype='pdf', filename=f'Kenya-Tours-Receipt-{booking.id}.pdf')
     except Exception:
         app.logger.exception('Could not generate payment documents for booking %s.', booking.id)
-    try:
-        if EMAIL_USE_SSL:
-            with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
-                server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
-                server.send_message(message)
-        else:
-            with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
-                server.ehlo()
-                if EMAIL_USE_TLS:
-                    server.starttls()
-                    server.ehlo()
-                server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
-                server.send_message(message)
-        app.logger.info('Booking confirmation email sent for booking %s.', booking.id)
-        return True
-    except (OSError, smtplib.SMTPException) as exc:
-        app.logger.error('Failed to send booking confirmation for booking %s: %s', booking.id, exc)
-        return False
+    return send_email_message(message, context=f'booking {booking.id} confirmation')
 
 
 def send_booking_status_notification(booking: Booking) -> bool:
-    if not (EMAIL_HOST and EMAIL_USERNAME and EMAIL_PASSWORD and EMAIL_FROM):
-        app.logger.warning('Booking status email skipped: missing SMTP configuration.')
-        return False
+    if booking.booking_type == 'property':
+        listing_details = (
+            f"Accommodation: {booking_listing_name(booking)}\n"
+            f"Room: {booking_room_name(booking) or 'Room'}\n"
+            f"Check-in: {booking.check_in}\n"
+            f"Check-out: {booking.check_out}\n"
+        )
+    else:
+        listing_details = (
+            f"Experience: {booking_listing_name(booking)}\n"
+            f"Departure: {booking.date} at {booking.time} (Kenya time)\n"
+        )
     message = EmailMessage()
     message['Subject'] = f"Booking #{booking.id} status updated"
     message['From'] = EMAIL_FROM
@@ -1225,32 +1951,60 @@ def send_booking_status_notification(booking: Booking) -> bool:
     message.set_content(
         f"Hello {booking.name},\n\n"
         f"The status of your Kenya Tours booking #{booking.id} is now: {booking.status.replace('_', ' ').title()}.\n"
-        f"Experience: {booking.tour.replace('-', ' ').title()}\n"
-        f"Departure: {booking.date} at {booking.time} (Kenya time)\n\n"
-        "Contact our team if you have questions about this update.\n"
+        + listing_details
+        + "\nContact our team if you have questions about this update.\n"
     )
-    try:
-        if EMAIL_USE_SSL:
-            with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
-                server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
-                server.send_message(message)
-        else:
-            with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
-                server.ehlo()
-                if EMAIL_USE_TLS:
-                    server.starttls()
-                    server.ehlo()
-                server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
-                server.send_message(message)
-        app.logger.info('Booking status email sent for booking %s.', booking.id)
-        return True
-    except (OSError, smtplib.SMTPException) as exc:
-        app.logger.error('Failed to send booking status email for booking %s: %s', booking.id, exc)
-        return False
+    return send_email_message(message, context=f'booking {booking.id} status update')
+
+
+def send_refund_notification(booking: Booking, *, paid: bool) -> bool:
+    """Best-effort email about a refund that is due or has been sent."""
+    amount = float(booking.refund_amount or booking.amount or 0)
+    if paid:
+        message_body = (
+            f"We have sent your refund of KSh {amount:,.0f} for booking #{booking.id}. "
+            "It should reflect on your M-Pesa statement shortly.\n"
+        )
+    elif booking.refund_status == 'rejected':
+        message_body = (
+            f"The refund request for booking #{booking.id} was reviewed and declined. "
+            "Contact our team if you would like us to look at the case again.\n"
+        )
+    else:
+        message_body = (
+            f"Your booking #{booking.id} was cancelled and a refund of KSh {amount:,.0f} is due. "
+            "Our team processes refunds and will let you know once the money has been sent.\n"
+        )
+    message = EmailMessage()
+    message['Subject'] = (
+        f"Refund sent for booking #{booking.id}" if paid
+        else f"Refund update for booking #{booking.id}"
+    )
+    message['From'] = EMAIL_FROM
+    message['To'] = booking.email
+    message.set_content(
+        f"Hello {booking.name},\n\n"
+        + message_body
+        + f"Listing: {booking_listing_name(booking)}\n"
+        + "\nYou can follow the refund status in My bookings on the Kenya Tours website.\n"
+    )
+    return send_email_message(message, context=f'booking {booking.id} refund update')
 
 
 @app.route('/')
 def index():
+    return frontend_page()
+
+
+@app.route('/operators/<string:slug>')
+def operator_page(slug):
+    """Serve the React operator profile; the profile data comes from the API."""
+    return frontend_page()
+
+
+@app.route('/blog/<string:slug>')
+def blog_post_page(slug):
+    """Serve the React travel guide; guide content is bundled with the frontend."""
     return frontend_page()
 
 
@@ -1296,6 +2050,7 @@ def admin_login():
     return redirect('/admin')
 
 
+@app.route('/partner/login', methods=['GET', 'POST'])
 @app.route('/vendor/login', methods=['GET', 'POST'])
 @limiter.limit('10 per hour', key_func=auth_account_key, methods=['POST'], deduct_when=failed_auth_attempt)
 @limiter.limit('5 per minute', key_func=auth_attempt_key, methods=['POST'])
@@ -1308,12 +2063,12 @@ def vendor_login():
     password = request.form.get('password', '')
     vendor = VendorAccount.query.filter_by(email=email).first()
     if not vendor or not vendor.is_active or not check_password_hash(vendor.password_hash, password):
-        return redirect('/vendor/login?error=Invalid%20vendor%20email%20or%20password.')
+        return redirect('/partner/login?error=Invalid%20partner%20email%20or%20password.')
 
     session.clear()
     session['vendor_id'] = vendor.id
     session['vendor_csrf'] = secrets.token_urlsafe(32)
-    return redirect('/vendor/dashboard')
+    return redirect('/partner/dashboard')
 
 
 @app.route('/api/vendor/registration-token', methods=['GET'])
@@ -1323,6 +2078,7 @@ def vendor_registration_token():
     return {'csrf_token': token}
 
 
+@app.route('/partner/register', methods=['GET', 'POST'])
 @app.route('/vendor/register', methods=['GET', 'POST'])
 @limiter.limit('3 per hour', methods=['POST'])
 def vendor_register():
@@ -1332,16 +2088,29 @@ def vendor_register():
     response = require_vendor_registration_csrf()
     if response:
         return response
-    data = admin_payload()
+    data = json_payload()
     name = str(data.get('name', '')).strip()
     email = str(data.get('email', '')).strip().lower()
     password = data.get('password', '')
     if not name or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email) or not isinstance(password, str) or len(password) < 12:
         return {'error': 'Enter your name, a valid email, and a password of at least 12 characters.'}, 400
     if VendorAccount.query.filter_by(email=email).first():
-        return {'error': 'A vendor account with that email already exists.'}, 409
+        return {'error': 'A partner account with that email already exists.'}, 409
 
-    vendor = VendorAccount(name=name, email=email, password_hash=generate_password_hash(password))
+    try:
+        profile = vendor_profile_values({
+            **data,
+            'business_types': data.get('business_types') or ['tours'],
+        })
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+
+    vendor = VendorAccount(
+        email=email,
+        password_hash=generate_password_hash(password),
+        slug=unique_slug(profile['name'], VendorAccount),
+        **profile,
+    )
     db.session.add(vendor)
     db.session.commit()
     session.clear()
@@ -1350,6 +2119,7 @@ def vendor_register():
     return {'vendor': vendor.to_dict(), 'csrf_token': session['vendor_csrf']}, 201
 
 
+@app.route('/partner/logout', methods=['POST'])
 @app.route('/vendor/logout', methods=['POST'])
 @vendor_required
 def vendor_logout():
@@ -1360,10 +2130,34 @@ def vendor_logout():
     return '', 204
 
 
+@app.route('/partner/dashboard', methods=['GET'])
 @app.route('/vendor/dashboard', methods=['GET'])
 @vendor_required
 def vendor_dashboard_page():
     return frontend_page()
+
+
+@app.route('/api/vendor/profile', methods=['GET', 'PUT'])
+@vendor_required
+def vendor_profile():
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Partner sign-in is required.'}, 401
+    if request.method == 'GET':
+        return {'vendor': vendor.to_dict()}
+
+    response = require_vendor_csrf()
+    if response:
+        return response
+    try:
+        values = vendor_profile_values(json_payload())
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    apply_values(vendor, values)
+    if not vendor.slug:
+        vendor.slug = unique_slug(vendor.name, VendorAccount, vendor.id)
+        db.session.commit()
+    return {'vendor': vendor.to_dict()}
 
 
 @app.route('/my-bookings', methods=['GET'])
@@ -1408,11 +2202,36 @@ def admin_catalogue():
             'owner_email': item.owner_email,
         } for item in Property.query.order_by(Property.name).all()],
         'destinations': [item.to_dict() for item in Destination.query.order_by(Destination.name).all()],
+        'services': [{
+            **item.to_dict(),
+            'vendor_name': (db.session.get(VendorAccount, item.vendor_id).name if item.vendor_id else ''),
+        } for item in Service.query.order_by(Service.name).all()],
+        'service_types': [[key, label] for key, label in SERVICE_TYPES.items()],
+        'service_price_units': list(SERVICE_PRICE_UNITS),
+        'tour_types': [[key, label] for key, label in TOUR_TYPES.items()],
+        'tour_group_types': [[key, label] for key, label in TOUR_GROUP_TYPES.items()],
+        'promotions': [
+            {**item.to_dict(), 'listing_name': promotion_listing_name(item)}
+            for item in Promotion.query.order_by(Promotion.ends_on.desc(), Promotion.id.desc()).all()
+        ],
+        'promotion_tiers': [[key, label] for key, label in PROMOTION_TIERS.items()],
+        'promotion_listing_types': [[key, label] for key, label in PROMOTION_LISTING_TYPES.items()],
+        'promotion_max_active': PROMOTION_MAX_ACTIVE,
+        'newsletter': {
+            'count': NewsletterSubscriber.query.filter_by(is_active=True).count(),
+            'recent': [
+                item.to_dict()
+                for item in NewsletterSubscriber.query.order_by(
+                    NewsletterSubscriber.created_at.desc()
+                ).limit(10).all()
+            ],
+        },
         'admins': [{'id': item.id, 'name': item.name, 'email': item.email} for item in AdminAccount.query.order_by(AdminAccount.email).all()],
         'vendors': [{
             **vendor.to_dict(),
             'tour_count': Tour.query.filter_by(vendor_id=vendor.id).count(),
             'property_count': Property.query.filter_by(vendor_id=vendor.id).count(),
+            'service_count': Service.query.filter_by(vendor_id=vendor.id).count(),
         } for vendor in VendorAccount.query.order_by(VendorAccount.email).all()],
     }
 
@@ -1476,7 +2295,7 @@ def record_analytics_event():
     page = payload.get('page')
     if not isinstance(page, str) or not page.startswith('/') or len(page) > 160:
         return {'error': 'A valid page path is required.'}, 400
-    if page.startswith(('/admin', '/vendor', '/dashboard')):
+    if page.startswith(('/admin', '/partner', '/vendor', '/dashboard')):
         return '', 204
 
     if 'analytics_source' not in session:
@@ -1492,18 +2311,47 @@ def record_analytics_event():
     return '', 204
 
 
+@app.route('/api/promotions/<string:listing_type>/<string:slug>/click', methods=['POST'])
+@limiter.limit('120 per minute')
+def record_promotion_click(listing_type, slug):
+    """Count a click on a sponsored slot; best-effort, never blocks the visitor."""
+    if listing_type not in PROMOTION_LISTING_TYPES:
+        return {'error': 'Unknown promotion type.'}, 400
+    promotion = Promotion.query.filter_by(listing_type=listing_type, listing_slug=slug).first()
+    if promotion and promotion.is_live(datetime.now(KENYA_TIMEZONE).date()):
+        promotion.clicks = (promotion.clicks or 0) + 1
+        db.session.commit()
+    return '', 204
+
+
 @app.route('/api/admin/operations', methods=['GET'])
 @admin_required
 def admin_operations():
     bookings = Booking.query.order_by(Booking.created_at.desc()).limit(200).all()
-    tour_slugs = {booking.tour for booking in bookings}
+    tour_slugs = {booking.tour for booking in bookings if booking.booking_type != 'property'}
     booking_tour_names = {
         tour.slug: tour.name for tour in Tour.query.filter(Tour.slug.in_(tour_slugs)).all()
     } if tour_slugs else {}
-    booking_rows = [
-        {**booking.to_dict(), 'tour_name': booking_tour_names.get(booking.tour, booking.tour)}
-        for booking in bookings
-    ]
+    stay_slugs = {booking.tour for booking in bookings if booking.booking_type == 'property'}
+    stay_names = {
+        listing.slug: listing.name for listing in Property.query.filter(Property.slug.in_(stay_slugs)).all()
+    } if stay_slugs else {}
+    booked_room_ids = {booking.room_id for booking in bookings if booking.room_id}
+    room_names = {
+        room.id: room.name for room in PropertyRoom.query.filter(PropertyRoom.id.in_(booked_room_ids)).all()
+    } if booked_room_ids else {}
+    booking_rows = []
+    for booking in bookings:
+        if booking.booking_type == 'property':
+            listing_name = stay_names.get(booking.tour) or booking.tour.replace('-', ' ').title()
+        else:
+            listing_name = booking_tour_names.get(booking.tour, booking.tour)
+        booking_rows.append({
+            **booking.to_dict(),
+            'tour_name': listing_name,
+            'property_name': listing_name if booking.booking_type == 'property' else None,
+            'room_name': room_names.get(booking.room_id, '') if booking.booking_type == 'property' else '',
+        })
 
     booking_counts = dict(db.session.query(
         Booking.user_id,
@@ -1538,6 +2386,9 @@ def admin_operations():
     report_tour_names = {
         tour.slug: tour.name for tour in Tour.query.filter(Tour.slug.in_(report_tour_slugs)).all()
     } if report_tour_slugs else {}
+    if report_tour_slugs:
+        for listing in Property.query.filter(Property.slug.in_(report_tour_slugs)).all():
+            report_tour_names.setdefault(listing.slug, listing.name)
 
     period_days = 30
     period_start = datetime.utcnow() - timedelta(days=period_days)
@@ -1633,7 +2484,11 @@ def admin_operations():
             db.func.count(Booking.id),
             db.func.coalesce(db.func.sum(case((Booking.payment_status == 'paid', 1), else_=0)), 0),
             db.func.coalesce(db.func.sum(case((Booking.payment_status == 'paid', Booking.amount), else_=0)), 0),
-        ).filter(Booking.tour.in_(property_slugs)).group_by(Booking.tour).all()
+        ).filter(
+            # Legacy stay bookings predate booking_type and never had a tour schedule.
+            or_(Booking.booking_type == 'property', Booking.schedule_id.is_(None)),
+            Booking.tour.in_(property_slugs),
+        ).group_by(Booking.tour).all()
         property_totals = {
             row[0]: {'bookings': row[1], 'paid_bookings': row[2], 'paid_revenue': float(row[3] or 0)}
             for row in property_rows
@@ -1661,11 +2516,69 @@ def admin_operations():
             'booking_email': booking.email if booking else '',
             'tour': booking.tour if booking else '',
         })
+    refund_due_count, refund_due_amount = db.session.query(
+        db.func.count(Booking.id),
+        db.func.coalesce(db.func.sum(Booking.refund_amount), 0),
+    ).filter(Booking.refund_status == 'pending').one()
+
+    discovery = catalogue_insights()
+    tour_names = {tour.slug: tour.name for tour in Tour.query.all()}
+    stay_names = {
+        listing.slug: listing.name for listing in Property.query.filter(Property.slug.isnot(None)).all()
+    }
+    revenue_by_slug = {row[0]: float(row[2] or 0) for row in report_rows}
+    price_rows = []
+    for slug_key, insight in discovery['tours'].items():
+        price_rows.append({
+            'slug': slug_key,
+            'name': tour_names.get(slug_key, slug_key.replace('-', ' ').title()),
+            'kind': 'tour',
+            'price_from': insight['price_from'],
+            'price_to': insight['price_to'],
+            'price_unit': 'per guest',
+            'median': insight['price_comparison']['median'],
+            'difference_percent': insight['price_comparison']['difference_percent'],
+            'position': insight['price_comparison']['position'],
+            'paid_bookings': insight['paid_bookings'],
+            'recent_bookings': insight['recent_bookings'],
+            'paid_revenue': revenue_by_slug.get(slug_key, 0.0),
+        })
+    for slug_key, insight in discovery['properties'].items():
+        price_rows.append({
+            'slug': slug_key,
+            'name': stay_names.get(slug_key, slug_key.replace('-', ' ').title()),
+            'kind': 'stay',
+            'price_from': insight['price_from'],
+            'price_to': insight['price_to'],
+            'price_unit': 'per night',
+            'median': insight['price_comparison']['median'],
+            'difference_percent': insight['price_comparison']['difference_percent'],
+            'position': insight['price_comparison']['position'],
+            'paid_bookings': insight['paid_bookings'],
+            'recent_bookings': insight['recent_bookings'],
+            'paid_revenue': revenue_by_slug.get(slug_key, 0.0),
+        })
+
+    def summarize_price_rows(rows):
+        prices = [row['price_from'] for row in rows if row['price_from'] > 0]
+        return {
+            'listings': len(rows),
+            'priced_listings': len(prices),
+            'median_price': round(median_price(prices)),
+            'below_market': sum(1 for row in rows if row['position'] == 'below'),
+            'above_market': sum(1 for row in rows if row['position'] == 'above'),
+            'around_market': sum(1 for row in rows if row['position'] == 'typical'),
+        }
+
+    tour_price_rows = [row for row in price_rows if row['kind'] == 'tour']
+    stay_price_rows = [row for row in price_rows if row['kind'] == 'stay']
+    price_rows.sort(key=lambda row: (-row['paid_revenue'], row['name']))
+
     return {
         'csrf_token': session['admin_csrf'],
         'settings': {
             'commission_rate': float(get_admin_setting('commission_rate', 15)),
-            'refund_policy': get_admin_setting('refund_policy', 'manual_review'),
+            'refund_policy': get_admin_setting('refund_policy', 'automatic'),
             'cancellation_window_hours': int(get_admin_setting('cancellation_window_hours', 48)),
         },
         'customers': customers,
@@ -1673,6 +2586,10 @@ def admin_operations():
         'bookings': booking_rows,
         'bookings_truncated': Booking.query.count() > len(bookings),
         'disputes': dispute_rows,
+        'refunds_due': {
+            'count': int(refund_due_count or 0),
+            'amount': float(refund_due_amount or 0),
+        },
         'analytics': {
             'total_bookings': Booking.query.count(),
             'paid_revenue': total_paid,
@@ -1682,6 +2599,11 @@ def admin_operations():
             'traffic_sources': traffic_sources,
             'occupancy_trends': occupancy_trends,
             'property_revenue': property_revenue,
+            'price_insights': {
+                'tours': summarize_price_rows(tour_price_rows),
+                'stays': summarize_price_rows(stay_price_rows),
+                'listings': price_rows[:20],
+            },
             'by_tour': [{
                 'tour': row[0],
                 'tour_name': report_tour_names.get(row[0], row[0]),
@@ -1699,7 +2621,7 @@ def admin_update_settings():
     response = require_admin_csrf()
     if response:
         return response
-    payload = admin_payload()
+    payload = json_payload()
     try:
         raw_commission_rate = payload.get('commission_rate')
         if raw_commission_rate is None:
@@ -1709,11 +2631,11 @@ def admin_update_settings():
         return {'error': 'Commission must be a number between 10% and 20%.'}, 400
     if not math.isfinite(commission_rate) or not 10 <= commission_rate <= 20:
         return {'error': 'Commission must be between 10% and 20%.'}, 400
-    if payload.get('refund_policy', 'manual_review') != 'manual_review':
-        return {'error': 'Refund requests must remain subject to manual admin review.'}, 400
+    if payload.get('refund_policy', 'automatic') != 'automatic':
+        return {'error': 'Paid bookings are refunded automatically when they are cancelled.'}, 400
     for key, value in {
         'commission_rate': f'{commission_rate:g}',
-        'refund_policy': 'manual_review',
+        'refund_policy': 'automatic',
         'cancellation_window_hours': '48',
     }.items():
         setting = db.session.get(AdminSetting, key)
@@ -1724,7 +2646,7 @@ def admin_update_settings():
     db.session.commit()
     return {'settings': {
         'commission_rate': commission_rate,
-        'refund_policy': 'manual_review',
+        'refund_policy': 'automatic',
         'cancellation_window_hours': 48,
     }}
 
@@ -1735,9 +2657,9 @@ def admin_update_user_status(role, user_id):
     response = require_admin_csrf()
     if response:
         return response
-    active = admin_payload().get('active')
+    active = json_payload().get('active')
     if not isinstance(active, bool) or role not in {'customer', 'vendor'}:
-        return {'error': 'Choose a valid customer/vendor account and active status.'}, 400
+        return {'error': 'Choose a valid customer or partner account and active status.'}, 400
     model = User if role == 'customer' else VendorAccount
     account = db.session.get(model, user_id)
     if not account:
@@ -1761,21 +2683,25 @@ def admin_cancel_booking(booking_id):
     if booking.payment_status == 'pending':
         return {'error': 'This booking has a pending M-Pesa request. Wait for its payment result before cancelling.'}, 409
     try:
-        release_schedule(booking.schedule_id, booking.guests)
+        release_booking_availability(booking)
     except ValueError as exc:
         db.session.rollback()
         return {'error': str(exc)}, 409
     booking.status = 'cancelled'
     if booking.payment_status == 'pending':
         booking.payment_status = 'cancelled'
+    refund_queued = queue_cancellation_refund(booking, 'administrator')
     db.session.commit()
+    if refund_queued:
+        send_refund_notification(booking, paid=False)
     email_sent = send_booking_status_notification(booking)
-    return {'booking': booking.to_dict(), 'email_sent': email_sent}
+    return {'booking': booking.to_dict(), 'email_sent': email_sent, 'refund_queued': refund_queued}
 
 
 @app.route('/api/admin/bookings/<int:booking_id>/refund', methods=['POST'])
 @admin_required
 def admin_update_refund(booking_id):
+    """Move a refund through the manual payout queue."""
     response = require_admin_csrf()
     if response:
         return response
@@ -1783,22 +2709,29 @@ def admin_update_refund(booking_id):
     if not booking:
         return {'error': 'Booking not found.'}, 404
     if booking.payment_status != 'paid':
-        return {'error': 'Only paid bookings can enter refund review.'}, 409
-    status = admin_payload().get('status')
-    transitions = {
-        'none': {'pending_review'},
-        'pending_review': {'approved', 'rejected'},
-        'approved': {'completed'},
-        'rejected': {'pending_review'},
-        'completed': set(),
-    }
-    if status not in transitions.get(booking.refund_status, set()):
+        return {'error': 'Only paid bookings can be refunded.'}, 409
+    payload = json_payload()
+    status = payload.get('status')
+    if status not in REFUND_TRANSITIONS.get(booking.refund_status, set()):
         return {'error': 'That refund status transition is not allowed.'}, 409
-    booking.refund_status = status
-    if status == 'completed':
-        booking.payment_status = 'refunded'
+    if status == 'pending':
+        reason = str(payload.get('reason') or '').strip()
+        queue_booking_refund(
+            booking,
+            reason[:255] or f'Refund requested by the administrator for booking #{booking.id}.',
+        )
+    elif status == 'paid':
+        mark_booking_refund_paid(booking)
+    else:
+        booking.refund_status = 'rejected'
+        booking.refund_paid_at = None
     db.session.commit()
-    return {'booking': booking.to_dict(), 'gateway_refund_issued': False}
+    email_sent = send_refund_notification(booking, paid=status == 'paid')
+    return {
+        'booking': booking.to_dict(),
+        'gateway_refund_issued': False,
+        'email_sent': email_sent,
+    }
 
 
 @app.route('/api/admin/bookings/<int:booking_id>/disputes', methods=['POST'])
@@ -1810,7 +2743,7 @@ def admin_open_booking_dispute(booking_id):
     booking = db.session.get(Booking, booking_id)
     if not booking:
         return {'error': 'Booking not found.'}, 404
-    reason = str(admin_payload().get('reason', '')).strip()
+    reason = str(json_payload().get('reason', '')).strip()
     if len(reason) < 10 or len(reason) > 3000:
         return {'error': 'Enter a dispute summary between 10 and 3,000 characters.'}, 400
     dispute = BookingDispute(booking_id=booking.id, reason=reason)
@@ -1830,7 +2763,7 @@ def admin_resolve_dispute(dispute_id):
         return {'error': 'Dispute not found.'}, 404
     if dispute.status != 'open':
         return {'error': 'This dispute has already been resolved.'}, 409
-    resolution = str(admin_payload().get('resolution', '')).strip()
+    resolution = str(json_payload().get('resolution', '')).strip()
     if len(resolution) < 10 or len(resolution) > 3000:
         return {'error': 'Enter a resolution between 10 and 3,000 characters.'}, 400
     dispute.status = 'resolved'
@@ -1840,9 +2773,102 @@ def admin_resolve_dispute(dispute_id):
     return {'dispute': dispute.to_dict()}
 
 
-def admin_payload():
+def json_payload():
+    """Return the JSON request body as a dict, or an empty dict when it is not an object."""
     payload = request.get_json(silent=True)
     return payload if isinstance(payload, dict) else {}
+
+
+def apply_values(instance, values):
+    """Copy validated payload values onto a model instance and persist them."""
+    for field, value in values.items():
+        setattr(instance, field, value)
+    db.session.commit()
+    return instance
+
+
+BOOKED_TOUR_DELETE_ERROR = 'A tour with booked departures cannot be deleted. Cancel or complete its bookings first.'
+
+
+def delete_tour(tour) -> bool:
+    """Delete a tour with its departures and reviews; returns False when a departure is booked."""
+    schedules = TourSchedule.query.filter_by(tour_slug=tour.slug).all()
+    if any(schedule.booked_count for schedule in schedules):
+        return False
+    for schedule in schedules:
+        db.session.delete(schedule)
+    Review.query.filter_by(target_type='tour', target_id=tour.slug).delete()
+    Promotion.query.filter_by(listing_type='tour', listing_slug=tour.slug).delete()
+    db.session.delete(tour)
+    db.session.commit()
+    return True
+
+
+def delete_property(listing):
+    """Delete a property listing together with its rooms, availability and reviews."""
+    room_ids = [room.id for room in PropertyRoom.query.filter_by(property_id=listing.id).all()]
+    if room_ids:
+        PropertyAvailability.query.filter(PropertyAvailability.room_id.in_(room_ids)).delete(synchronize_session=False)
+        PropertyRoom.query.filter(PropertyRoom.property_id == listing.id).delete(synchronize_session=False)
+    Review.query.filter_by(target_type='property', target_id=listing.slug).delete()
+    Promotion.query.filter_by(listing_type='property', listing_slug=listing.slug).delete()
+    db.session.delete(listing)
+    db.session.commit()
+
+
+PHONE_PATTERN = re.compile(r'^\+?[0-9][0-9\s\-()]{6,19}$')
+
+
+def text_lines_value(value, label, *, max_items=20, max_length=200):
+    """Normalise a list or one-item-per-line field into stored newline text."""
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value]
+    elif value in (None, ''):
+        items = []
+    elif isinstance(value, str):
+        items = [item.strip() for item in value.splitlines()]
+    else:
+        raise ValueError(f'{label} must be a list or one item per line.')
+    items = list(dict.fromkeys(item for item in items if item))
+    if len(items) > max_items:
+        raise ValueError(f'Add at most {max_items} entries to {label.lower()}.')
+    if any(len(item) > max_length for item in items):
+        raise ValueError(f'Each entry in {label.lower()} must be {max_length} characters or fewer.')
+    return '\n'.join(items)
+
+
+def tag_list_value(value, label, *, max_items=12, max_length=40):
+    """Normalise a comma-, semicolon- or line-separated tag field."""
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value]
+    elif value in (None, ''):
+        items = []
+    elif isinstance(value, str):
+        items = [item.strip() for item in re.split(r'[,;\n]+', value)]
+    else:
+        raise ValueError(f'{label} must be a list or separated text.')
+    items = list(dict.fromkeys(item for item in items if item))
+    if len(items) > max_items:
+        raise ValueError(f'Add at most {max_items} entries to {label.lower()}.')
+    if any(len(item) > max_length for item in items):
+        raise ValueError(f'Each entry in {label.lower()} must be {max_length} characters or fewer.')
+    return '\n'.join(items)
+
+
+def boolean_value(value, default=True):
+    if value is None or value == '':
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on', 'active', 'visible'}
+
+
+def destination_value(value):
+    """Resolve a destination slug so listings only point at known places."""
+    destination = str(value or 'lamu').strip().lower()
+    if not db.session.get(Destination, destination):
+        raise ValueError('Choose one of the listed destinations.')
+    return destination
 
 
 def tour_values(data):
@@ -1853,14 +2879,22 @@ def tour_values(data):
     itinerary = data.get('itinerary', '')
     inclusions = data.get('inclusions', '')
     exclusions = data.get('exclusions', '')
-    itinerary = '\n'.join(str(step).strip() for step in itinerary if str(step).strip()) if isinstance(itinerary, list) else str(itinerary).strip()
-    inclusions = '\n'.join(str(item).strip() for item in inclusions if str(item).strip()) if isinstance(inclusions, list) else str(inclusions).strip()
-    exclusions = '\n'.join(str(item).strip() for item in exclusions if str(item).strip()) if isinstance(exclusions, list) else str(exclusions).strip()
+    itinerary = text_lines_value(itinerary, 'Itinerary', max_items=20, max_length=300)
+    inclusions = text_lines_value(inclusions, "What's included", max_items=20, max_length=200)
+    exclusions = text_lines_value(exclusions, "What's not included", max_items=20, max_length=200)
+    languages = tag_list_value(data.get('languages'), 'Languages', max_items=12, max_length=40)
     pickup_point = str(data.get('pickup_point', 'Confirm with your operator')).strip()
+    tour_type = str(data.get('tour_type') or 'experience').strip().lower()
+    group_type = str(data.get('group_type') or 'private').strip().lower()
+    raw_days = data.get('duration_days')
+    if raw_days in (None, ''):
+        day_match = re.search(r'(\d+)\s*day', duration, re.IGNORECASE)
+        raw_days = day_match.group(1) if day_match else 1
     try:
         price = int(data.get('price', 0))
         min_group_size = int(data.get('min_group_size', 1))
         max_group_size = int(data.get('max_group_size', 12))
+        duration_days = int(raw_days)
         image_url = safe_image_url(data.get('image_url'))
     except (TypeError, ValueError) as exc:
         raise ValueError(str(exc) or 'Price must be a positive whole number.') from exc
@@ -1868,6 +2902,12 @@ def tour_values(data):
         raise ValueError('Name, category, description, duration, pickup point, and a positive price are required.')
     if min_group_size < 1 or max_group_size < min_group_size:
         raise ValueError('Group sizes must be positive and maximum size cannot be below minimum size.')
+    if tour_type not in TOUR_TYPES:
+        raise ValueError('Choose a valid tour style.')
+    if group_type not in TOUR_GROUP_TYPES:
+        raise ValueError('Choose whether the tour runs as a private or shared group.')
+    if duration_days < 1 or duration_days > 60:
+        raise ValueError('Tour length must be between 1 and 60 days.')
     return {
         'name': name,
         'description': description,
@@ -1880,7 +2920,94 @@ def tour_values(data):
         'pickup_point': pickup_point,
         'min_group_size': min_group_size,
         'max_group_size': max_group_size,
+        'destination': destination_value(data.get('destination')),
+        'tour_type': tour_type,
+        'duration_days': duration_days,
+        'languages': languages,
+        'group_type': group_type,
         'image_url': image_url,
+    }
+
+
+def vendor_profile_values(data):
+    """Validate the public business profile a supplier shows to travellers."""
+    name = str(data.get('name', '')).strip()
+    if not name or len(name) > 100:
+        raise ValueError('Enter a business name of 100 characters or fewer.')
+    raw_types = data.get('business_types', '')
+    if isinstance(raw_types, list):
+        selected = [str(item).strip().lower() for item in raw_types]
+    elif isinstance(raw_types, str):
+        selected = [item.strip().lower() for item in re.split(r'[,;\n]+', raw_types)]
+    else:
+        raise ValueError('Choose your business types from the available options.')
+    selected_set = set(selected)
+    business_types = [key for key in VENDOR_BUSINESS_TYPES if key in selected_set]
+    if not business_types:
+        raise ValueError('Choose at least one business type, such as safari operator or tour operator.')
+    description = str(data.get('description', '')).strip()
+    if len(description) > 2000:
+        raise ValueError('Business descriptions must be under 2,000 characters.')
+    location = str(data.get('location', '')).strip()
+    if len(location) > 120:
+        raise ValueError('Locations must be 120 characters or fewer.')
+    phone = re.sub(r'\s+', ' ', str(data.get('phone', '')).strip())
+    if phone and not PHONE_PATTERN.fullmatch(phone):
+        raise ValueError('Enter a phone number travellers can call or message.')
+    website = str(data.get('website', '')).strip()
+    if website and (len(website) > 255 or not website.startswith(('https://', 'http://'))):
+        raise ValueError('Websites must start with http:// or https:// and be 255 characters or fewer.')
+    return {
+        'name': name,
+        'business_types': ','.join(business_types),
+        'description': description,
+        'location': location,
+        'phone': phone,
+        'website': website,
+        'logo_url': safe_image_url(data.get('logo_url')),
+    }
+
+
+def service_values(data):
+    """Validate an enquiry-only service listing such as a transfer or guide."""
+    name = str(data.get('name', '')).strip()
+    service_type = str(data.get('service_type') or '').strip().lower()
+    description = str(data.get('description', '')).strip()
+    price_unit = str(data.get('price_unit') or 'per person').strip().lower()
+    location = str(data.get('location', '')).strip()
+    coverage = text_lines_value(data.get('coverage'), 'Service coverage', max_items=20, max_length=120)
+    inclusions = text_lines_value(data.get('inclusions'), 'Inclusions', max_items=20, max_length=200)
+    try:
+        price_from = int(data.get('price_from', 0))
+        image_url = safe_image_url(data.get('image_url'))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(str(exc) or 'Enter a starting price in whole shillings.') from exc
+    if not name or len(name) > 150:
+        raise ValueError('Enter a service name of 150 characters or fewer.')
+    if service_type not in SERVICE_TYPES:
+        raise ValueError('Choose a valid service type.')
+    if not description:
+        raise ValueError('Describe what the service includes.')
+    if len(description) > 2000:
+        raise ValueError('Service descriptions must be under 2,000 characters.')
+    if price_from < 1:
+        raise ValueError('Enter a starting price of at least 1.')
+    if price_unit not in SERVICE_PRICE_UNITS:
+        raise ValueError('Choose how the service is priced.')
+    if not location or len(location) > 120:
+        raise ValueError('Enter the location where travellers can use this service.')
+    return {
+        'name': name,
+        'service_type': service_type,
+        'description': description,
+        'price_from': price_from,
+        'price_unit': price_unit,
+        'location': location,
+        'destination': destination_value(data.get('destination')),
+        'coverage': coverage,
+        'inclusions': inclusions,
+        'image_url': image_url,
+        'is_active': boolean_value(data.get('is_active')),
     }
 
 
@@ -1903,7 +3030,7 @@ def coordinate_pair(data):
 
 def property_values(data):
     name = str(data.get('name', '')).strip()
-    property_type = str(data.get('property_type', '')).strip().lower()
+    property_type = normalize_property_type(data.get('property_type'))
     location = str(data.get('location', '')).strip()
     description = str(data.get('description', '')).strip()
     raw_amenities = data.get('amenities', '')
@@ -1923,7 +3050,7 @@ def property_values(data):
         latitude, longitude = coordinate_pair(data)
     except (TypeError, ValueError) as exc:
         raise ValueError(str(exc) or 'Price and guest capacity must be positive whole numbers.') from exc
-    if not name or not location or not description or property_type not in {'hotel', 'home', 'guest house', 'villa'} or price < 1 or guests < 1:
+    if not name or not location or not description or property_type not in PROPERTY_TYPES or price < 1 or guests < 1:
         raise ValueError('Complete all property fields with a valid type, price, and guest capacity.')
     return {
         'name': name,
@@ -1970,7 +3097,7 @@ def admin_create_tour():
     response = require_admin_csrf()
     if response:
         return response
-    data = admin_payload()
+    data = json_payload()
     try:
         values = tour_values(data)
     except (TypeError, ValueError) as exc:
@@ -1992,25 +3119,66 @@ def admin_update_tour(slug):
     if not tour:
         return {'error': 'Tour not found.'}, 404
     if request.method == 'DELETE':
-        schedules = TourSchedule.query.filter_by(tour_slug=tour.slug).all()
-        if any(schedule.booked_count for schedule in schedules):
-            return {'error': 'A tour with booked departures cannot be deleted. Cancel or complete its bookings first.'}, 409
-        for schedule in schedules:
-            db.session.delete(schedule)
-        Review.query.filter_by(target_type='tour', target_id=tour.slug).delete()
-        db.session.delete(tour)
-        db.session.commit()
+        if not delete_tour(tour):
+            return {'error': BOOKED_TOUR_DELETE_ERROR}, 409
         return '', 204
 
-    data = admin_payload()
+    data = json_payload()
     try:
         values = tour_values(data)
     except (TypeError, ValueError) as exc:
         return {'error': str(exc)}, 400
-    for field, value in values.items():
-        setattr(tour, field, value)
-    db.session.commit()
+    apply_values(tour, values)
     return {'tour': tour.to_dict()}
+
+
+@app.route('/api/admin/services', methods=['POST'])
+@admin_required
+def admin_create_service():
+    response = require_admin_csrf()
+    if response:
+        return response
+    data = json_payload()
+    vendor_id = data.get('vendor_id')
+    if vendor_id not in (None, ''):
+        try:
+            vendor_id = int(vendor_id)
+        except (TypeError, ValueError):
+            return {'error': 'Choose a valid partner account.'}, 400
+        if not db.session.get(VendorAccount, vendor_id):
+            return {'error': 'Partner account not found.'}, 400
+    else:
+        vendor_id = None
+    try:
+        values = service_values(data)
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    slug = unique_slug(str(data.get('slug') or values['name']), Service)
+    service = Service(slug=slug, vendor_id=vendor_id, **values)
+    db.session.add(service)
+    db.session.commit()
+    return {'service': service.to_dict()}, 201
+
+
+@app.route('/api/admin/services/<string:slug>', methods=['PUT', 'DELETE'])
+@admin_required
+def admin_update_service(slug):
+    response = require_admin_csrf()
+    if response:
+        return response
+    service = Service.query.filter_by(slug=slug).first()
+    if not service:
+        return {'error': 'Service not found.'}, 404
+    if request.method == 'DELETE':
+        db.session.delete(service)
+        db.session.commit()
+        return '', 204
+    try:
+        values = service_values(json_payload())
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    apply_values(service, values)
+    return {'service': service.to_dict()}
 
 
 @app.route('/api/admin/properties', methods=['POST'])
@@ -2019,7 +3187,7 @@ def admin_create_property():
     response = require_admin_csrf()
     if response:
         return response
-    data = admin_payload()
+    data = json_payload()
     try:
         values = property_values(data)
     except (TypeError, ValueError) as exc:
@@ -2049,20 +3217,101 @@ def admin_update_property(property_id):
     if not listing:
         return {'error': 'Property not found.'}, 404
     if request.method == 'DELETE':
-        Review.query.filter_by(target_type='property', target_id=listing.slug).delete()
-        db.session.delete(listing)
-        db.session.commit()
+        delete_property(listing)
         return '', 204
 
-    data = admin_payload()
+    data = json_payload()
     try:
         values = property_values(data)
     except (TypeError, ValueError) as exc:
         return {'error': str(exc)}, 400
-    for field, value in values.items():
-        setattr(listing, field, value)
-    db.session.commit()
+    apply_values(listing, values)
     return {'property': listing.to_dict()}
+
+
+def parse_promotion_date(value, label):
+    """Read an ISO date from the admin form, with a message a person can act on."""
+    try:
+        return date.fromisoformat(str(value or '').strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'Choose a valid {label} date.') from exc
+
+
+@app.route('/api/admin/promotions', methods=['POST'])
+@admin_required
+def admin_save_promotion():
+    """Start or edit the single campaign a listing can run at a time."""
+    response = require_admin_csrf()
+    if response:
+        return response
+    data = json_payload()
+    listing_type = str(data.get('listing_type') or '').strip()
+    if listing_type not in PROMOTION_LISTING_TYPES:
+        return {'error': 'Choose whether the promotion is for an experience or a place to stay.'}, 400
+    listing_slug = str(data.get('listing_slug') or '').strip()
+    listing = (
+        db.session.get(Tour, listing_slug) if listing_type == 'tour'
+        else Property.query.filter_by(slug=listing_slug).first()
+    )
+    if not listing:
+        return {'error': 'Choose a published listing with a public page.'}, 400
+    tier = str(data.get('tier') or '').strip()
+    if tier not in PROMOTION_TIERS:
+        return {'error': 'Choose a promotion tier.'}, 400
+    headline = str(data.get('headline') or '').strip()
+    if len(headline) > 140:
+        return {'error': 'Keep the headline under 140 characters.'}, 400
+    try:
+        starts_on = parse_promotion_date(data.get('starts_on'), 'start')
+        ends_on = parse_promotion_date(data.get('ends_on'), 'end')
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    if ends_on < starts_on:
+        return {'error': 'The promotion must end on or after it starts.'}, 400
+
+    promotion = Promotion.query.filter_by(listing_type=listing_type, listing_slug=listing_slug).first()
+    created = promotion is None
+    today = datetime.now(KENYA_TIMEZONE).date()
+    live_elsewhere = Promotion.query.filter(
+        Promotion.starts_on <= today,
+        Promotion.ends_on >= today,
+        Promotion.id != (promotion.id if promotion else 0),
+    ).count()
+    if starts_on <= today <= ends_on and live_elsewhere >= PROMOTION_MAX_ACTIVE:
+        return {
+            'error': f'Up to {PROMOTION_MAX_ACTIVE} promotions can run at once. Pause one before starting another.'
+        }, 400
+    if created:
+        promotion = Promotion(
+            listing_type=listing_type,
+            listing_slug=listing_slug,
+            impressions=0,
+            clicks=0,
+        )
+        db.session.add(promotion)
+    promotion.tier = tier
+    promotion.headline = headline
+    promotion.starts_on = starts_on
+    promotion.ends_on = ends_on
+    db.session.commit()
+    return {
+        'promotion': {**promotion.to_dict(), 'listing_name': listing.name},
+    }, 201 if created else 200
+
+
+@app.route('/api/admin/promotions/<int:promotion_id>', methods=['DELETE'])
+@admin_required
+def admin_delete_promotion(promotion_id):
+    """End a campaign immediately; the listing returns to organic ranking."""
+    response = require_admin_csrf()
+    if response:
+        return response
+    promotion = db.session.get(Promotion, promotion_id)
+    if not promotion:
+        return {'error': 'Promotion not found.'}, 404
+    db.session.delete(promotion)
+    db.session.commit()
+    return '', 204
 
 
 @app.route('/api/admin/destinations', methods=['POST'])
@@ -2071,7 +3320,7 @@ def admin_create_destination():
     response = require_admin_csrf()
     if response:
         return response
-    data = admin_payload()
+    data = json_payload()
     try:
         values = destination_values(data)
     except ValueError as exc:
@@ -2096,14 +3345,12 @@ def admin_update_destination(slug):
         db.session.delete(destination)
         db.session.commit()
         return '', 204
-    data = admin_payload()
+    data = json_payload()
     try:
         values = destination_values(data)
     except ValueError as exc:
         return {'error': str(exc)}, 400
-    for field, value in values.items():
-        setattr(destination, field, value)
-    db.session.commit()
+    apply_values(destination, values)
     return {'destination': destination.to_dict()}
 
 
@@ -2113,7 +3360,7 @@ def admin_create_account():
     response = require_admin_csrf()
     if response:
         return response
-    data = admin_payload()
+    data = json_payload()
     name = str(data.get('name', '')).strip()
     email = str(data.get('email', '')).strip().lower()
     password = data.get('password', '')
@@ -2153,13 +3400,13 @@ def admin_delete_vendor(vendor_id):
         return response
     vendor = db.session.get(VendorAccount, vendor_id)
     if not vendor:
-        return {'error': 'Vendor account not found.'}, 404
+        return {'error': 'Partner account not found.'}, 404
     tours = Tour.query.filter_by(vendor_id=vendor.id).all()
     properties = Property.query.filter_by(vendor_id=vendor.id).all()
     for tour in tours:
         schedules = TourSchedule.query.filter_by(tour_slug=tour.slug).all()
         if any(schedule.booked_count for schedule in schedules):
-            return {'error': 'Cancel or complete this vendor’s scheduled bookings before removing the account.'}, 409
+            return {'error': 'Cancel or complete this partner’s scheduled bookings before removing the account.'}, 409
         for schedule in schedules:
             db.session.delete(schedule)
         Review.query.filter_by(target_type='tour', target_id=tour.slug).delete()
@@ -2196,7 +3443,7 @@ def manage_availability(scope):
     response = require_admin_csrf() if scope is None else require_vendor_csrf()
     if response:
         return response
-    data = admin_payload()
+    data = json_payload()
     if request.method == 'POST':
         try:
             values = availability_payload(data)
@@ -2267,7 +3514,7 @@ def admin_availability_item(schedule_id):
 def vendor_availability():
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
     return manage_availability(vendor.id)
 
 
@@ -2276,8 +3523,228 @@ def vendor_availability():
 def vendor_availability_item(schedule_id):
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
     return manage_availability(vendor.id)
+
+
+def room_values(data):
+    name = str(data.get('name', '')).strip()
+    description = str(data.get('description', '')).strip()
+    try:
+        guests = int(data.get('guests', 0))
+        base_rate = int(data.get('base_rate', 0))
+        total_units = int(data.get('total_units', 1))
+        image_url = safe_image_url(data.get('image_url'))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(str(exc) or 'Enter valid guest capacity, nightly rate and unit count.') from exc
+    if not name:
+        raise ValueError('Enter a room name.')
+    if len(name) > 120:
+        raise ValueError('Room names must be 120 characters or fewer.')
+    if len(description) > 2000:
+        raise ValueError('Room descriptions must be under 2,000 characters.')
+    if guests < 1 or guests > 50:
+        raise ValueError('Guest capacity per room must be between 1 and 50.')
+    if base_rate < 1:
+        raise ValueError('Enter a nightly rate of at least 1.')
+    if total_units < 1 or total_units > 500:
+        raise ValueError('Room units must be between 1 and 500.')
+    return {
+        'name': name,
+        'description': description,
+        'guests': guests,
+        'base_rate': base_rate,
+        'total_units': total_units,
+        'image_url': image_url,
+    }
+
+
+def scoped_property(scope, property_id):
+    """Resolve a property the current vendor (or any admin) may manage."""
+    listing = db.session.get(Property, property_id)
+    if listing is None or (scope is not None and listing.vendor_id != scope):
+        return None, ({'error': 'Property not found.'}, 404)
+    return listing, None
+
+
+def scoped_room(scope, property_id, room_id):
+    listing, error = scoped_property(scope, property_id)
+    if error:
+        return None, None, error
+    room = PropertyRoom.query.filter_by(id=room_id, property_id=listing.id).first()
+    if room is None:
+        return None, None, ({'error': 'Room not found.'}, 404)
+    return room, listing, None
+
+
+def manage_property_rooms(scope, property_id):
+    if request.method == 'GET':
+        listing, error = scoped_property(scope, property_id)
+        if error:
+            return error
+        rooms = PropertyRoom.query.filter_by(property_id=listing.id).order_by(
+            PropertyRoom.base_rate, PropertyRoom.id
+        ).all()
+        return {'property': listing.to_dict(), 'rooms': [room.to_dict() for room in rooms]}
+
+    response = require_admin_csrf() if scope is None else require_vendor_csrf()
+    if response:
+        return response
+    listing, error = scoped_property(scope, property_id)
+    if error:
+        return error
+    try:
+        values = room_values(json_payload())
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    room = PropertyRoom(property_id=listing.id, **values)
+    db.session.add(room)
+    db.session.commit()
+    return {'room': room.to_dict()}, 201
+
+
+def manage_property_room(scope, property_id, room_id):
+    room, listing, error = scoped_room(scope, property_id, room_id)
+    if error:
+        return error
+    if request.method == 'GET':
+        return {'room': room.to_dict()}
+
+    response = require_admin_csrf() if scope is None else require_vendor_csrf()
+    if response:
+        return response
+    if request.method == 'DELETE':
+        open_booking = Booking.query.filter(
+            Booking.room_id == room.id,
+            Booking.status.in_(('requested', 'confirmed', 'in_preparation')),
+        ).first()
+        if open_booking:
+            return {'error': 'This room has open bookings. Cancel or complete them before deleting it.'}, 409
+        PropertyAvailability.query.filter_by(room_id=room.id).delete()
+        db.session.delete(room)
+        db.session.commit()
+        return '', 204
+
+    data = json_payload()
+    try:
+        values = room_values({
+            'name': data.get('name', room.name),
+            'description': data.get('description', room.description),
+            'guests': data.get('guests', room.guests),
+            'base_rate': data.get('base_rate', room.base_rate),
+            'total_units': data.get('total_units', room.total_units),
+            'image_url': data.get('image_url', room.image_url or ''),
+        })
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    reserved = db.session.query(db.func.max(PropertyAvailability.reserved_count)).filter(
+        PropertyAvailability.room_id == room.id
+    ).scalar() or 0
+    if values['total_units'] < int(reserved):
+        return {'error': 'Units cannot be below the nights already booked in this room.'}, 409
+    for field, value in values.items():
+        setattr(room, field, value)
+    if 'is_active' in data:
+        room.is_active = bool(data.get('is_active'))
+    db.session.commit()
+    return {'room': room.to_dict()}
+
+
+def manage_room_availability(scope, property_id, room_id):
+    room, listing, error = scoped_room(scope, property_id, room_id)
+    if error:
+        return error
+    if request.method == 'GET':
+        today = datetime.now(KENYA_TIMEZONE).date()
+        start = request.args.get('from') or today.isoformat()
+        end = request.args.get('to') or (today + timedelta(days=60)).isoformat()
+        try:
+            calendar = room_calendar(room, start, end)
+        except ValueError as exc:
+            return {'error': str(exc)}, 400
+        return {'room': room.to_dict(), 'calendar': calendar}
+
+    response = require_admin_csrf() if scope is None else require_vendor_csrf()
+    if response:
+        return response
+
+    if request.method == 'DELETE':
+        payload = request.get_json(silent=True) or {}
+        day = request.args.get('date') or payload.get('date')
+        try:
+            clear_availability_day(room, day)
+        except ValueError as exc:
+            return {'error': str(exc)}, 400
+        db.session.commit()
+        return '', 204
+
+    data = json_payload()
+    start = data.get('from') or data.get('start') or request.args.get('from')
+    end = data.get('to') or data.get('end') or start
+    options = {}
+    for key in ('rate', 'units_available'):
+        if key in data:
+            options[key] = data.get(key)
+    if 'is_closed' in data:
+        options['is_closed'] = data.get('is_closed') in (True, 1, '1', 'true', 'True', 'on')
+    if not options:
+        return {'error': 'Set a nightly rate, unit count or closure for the range.'}, 400
+    try:
+        update_availability_range(room, start, end, **options)
+    except ValueError as exc:
+        db.session.rollback()
+        return {'error': str(exc)}, 400
+    db.session.commit()
+    try:
+        calendar = room_calendar(room, start, end)
+    except ValueError:
+        calendar = []
+    return {'room': room.to_dict(), 'calendar': calendar}
+
+
+@app.route('/api/admin/properties/<int:property_id>/rooms', methods=['GET', 'POST'])
+@admin_required
+def admin_property_rooms(property_id):
+    return manage_property_rooms(None, property_id)
+
+
+@app.route('/api/admin/properties/<int:property_id>/rooms/<int:room_id>', methods=['GET', 'PUT', 'DELETE'])
+@admin_required
+def admin_property_room(property_id, room_id):
+    return manage_property_room(None, property_id, room_id)
+
+
+@app.route('/api/admin/properties/<int:property_id>/rooms/<int:room_id>/availability', methods=['GET', 'PUT', 'DELETE'])
+@admin_required
+def admin_property_room_availability(property_id, room_id):
+    return manage_room_availability(None, property_id, room_id)
+
+
+@app.route('/api/vendor/properties/<int:property_id>/rooms', methods=['GET', 'POST'])
+@vendor_required
+def vendor_property_rooms(property_id):
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Partner sign-in is required.'}, 401
+    return manage_property_rooms(vendor.id, property_id)
+
+
+@app.route('/api/vendor/properties/<int:property_id>/rooms/<int:room_id>', methods=['GET', 'PUT', 'DELETE'])
+@vendor_required
+def vendor_property_room(property_id, room_id):
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Partner sign-in is required.'}, 401
+    return manage_property_room(vendor.id, property_id, room_id)
+
+
+@app.route('/api/vendor/properties/<int:property_id>/rooms/<int:room_id>/availability', methods=['GET', 'PUT', 'DELETE'])
+@vendor_required
+def vendor_property_room_availability(property_id, room_id):
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Partner sign-in is required.'}, 401
+    return manage_room_availability(vendor.id, property_id, room_id)
 
 
 def save_catalog_image(owner_folder):
@@ -2327,7 +3794,7 @@ def vendor_upload_image():
         return response
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
     return save_catalog_image(f'vendors/{vendor.id}')
 
 
@@ -2346,18 +3813,115 @@ def public_tour_availability(tour_slug):
     return {'schedules': [item.to_dict() for item in schedules]}
 
 
+@app.route('/api/properties/<string:property_slug>/availability', methods=['GET'])
+def public_property_availability(property_slug):
+    property_listing = Property.query.filter_by(slug=property_slug).first()
+    if property_listing is None:
+        return {'error': 'Accommodation not found.'}, 404
+    try:
+        start, end, nights = stay_nights(request.args.get('check_in', ''), request.args.get('check_out', ''))
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    try:
+        guest_count = max(1, int(request.args.get('guests', 1)))
+    except (TypeError, ValueError):
+        return {'error': 'Choose a valid guest count.'}, 400
+
+    rooms = PropertyRoom.query.filter_by(
+        property_id=property_listing.id, is_active=True
+    ).order_by(PropertyRoom.base_rate, PropertyRoom.id).all()
+    options = []
+    for room in rooms:
+        try:
+            quote = stay_option(room, start.isoformat(), end.isoformat())
+        except ValueError:
+            continue
+        options.append({
+            'id': room.id,
+            'name': room.name,
+            'description': room.description or '',
+            'guests': int(room.guests),
+            'image_url': room.image_url,
+            'rate': quote['nightly'][0]['rate'] if quote['nightly'] else int(room.base_rate),
+            'total': quote['total'],
+            'remaining': quote['remaining'],
+            'is_available': bool(quote['is_available'] and guest_count <= int(room.guests)),
+            'nightly': quote['nightly'],
+        })
+    return {
+        'property': {
+            **property_listing.to_dict(),
+            **review_ratings('property', [property_listing.slug]).get(
+                property_listing.slug, {'rating': 0, 'review_count': 0}
+            ),
+        },
+        'check_in': start.isoformat(),
+        'check_out': end.isoformat(),
+        'nights': nights,
+        'guests': guest_count,
+        'rooms': options,
+    }
+
+
 @app.route('/api/vendor/catalogue', methods=['GET'])
 @vendor_required
 def vendor_catalogue():
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
+    campaigns = {(row.listing_type, row.listing_slug): row for row in Promotion.query.all()}
+
+    def with_promotion(listing_type, payload):
+        # Partners see the campaign on their listing, whether it is live or scheduled.
+        campaign = campaigns.get((listing_type, payload.get('slug')))
+        payload['promotion'] = campaign.to_dict() if campaign else None
+        return payload
+
     return {
         'vendor': vendor.to_dict(),
         'csrf_token': session['vendor_csrf'],
-        'tours': [item.to_dict() for item in Tour.query.filter_by(vendor_id=vendor.id).order_by(Tour.name).all()],
-        'properties': [item.to_dict() for item in Property.query.filter_by(vendor_id=vendor.id).order_by(Property.name).all()],
+        'tours': [with_promotion('tour', item.to_dict()) for item in Tour.query.filter_by(vendor_id=vendor.id).order_by(Tour.name).all()],
+        'properties': [with_promotion('property', item.to_dict()) for item in Property.query.filter_by(vendor_id=vendor.id).order_by(Property.name).all()],
+        'services': [item.to_dict() for item in Service.query.filter_by(vendor_id=vendor.id).order_by(Service.name).all()],
+        'destinations': [item.to_dict() for item in Destination.query.order_by(Destination.name).all()],
+        'service_types': [[key, label] for key, label in SERVICE_TYPES.items()],
+        'service_price_units': list(SERVICE_PRICE_UNITS),
+        'tour_types': [[key, label] for key, label in TOUR_TYPES.items()],
+        'tour_group_types': [[key, label] for key, label in TOUR_GROUP_TYPES.items()],
     }
+
+
+def vendor_booking_rows(vendor_id):
+    """List a vendor's tour and accommodation bookings for the dashboard."""
+    tour_rows = db.session.query(Booking, Tour.name).join(
+        Tour, Tour.slug == Booking.tour
+    ).filter(
+        Tour.vendor_id == vendor_id,
+        Booking.booking_type != 'property',
+    ).all()
+    stay_rows = db.session.query(Booking, Property.name, PropertyRoom.name).join(
+        Property, Property.slug == Booking.tour
+    ).outerjoin(
+        PropertyRoom, PropertyRoom.id == Booking.room_id
+    ).filter(
+        Property.vendor_id == vendor_id,
+        Booking.booking_type == 'property',
+    ).all()
+    rows = [
+        {**booking.to_dict(), 'tour_name': tour_name, 'property_name': None, 'room_name': ''}
+        for booking, tour_name in tour_rows
+    ]
+    rows.extend(
+        {
+            **booking.to_dict(),
+            'tour_name': property_name,
+            'property_name': property_name,
+            'room_name': room_name or '',
+        }
+        for booking, property_name, room_name in stay_rows
+    )
+    rows.sort(key=lambda row: row.get('created_at') or '', reverse=True)
+    return rows
 
 
 @app.route('/api/vendor/bookings', methods=['GET'])
@@ -2365,14 +3929,8 @@ def vendor_catalogue():
 def vendor_bookings():
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
-    vendor_id = vendor.id
-    rows = db.session.query(Booking, Tour.name).join(
-        Tour, Tour.slug == Booking.tour
-    ).filter(
-        Tour.vendor_id == vendor_id
-    ).order_by(Booking.created_at.desc()).all()
-    return {'bookings': [{**booking.to_dict(), 'tour_name': tour_name} for booking, tour_name in rows]}
+        return {'error': 'Partner sign-in is required.'}, 401
+    return {'bookings': vendor_booking_rows(vendor.id)}
 
 
 @app.route('/api/vendor/bookings/<int:booking_id>/status', methods=['POST'])
@@ -2383,25 +3941,35 @@ def vendor_update_booking_status(booking_id):
         return response
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
     vendor_id = vendor.id
-    booking = db.session.query(Booking).join(
+    booking = db.session.query(Booking).outerjoin(
         Tour, Tour.slug == Booking.tour
+    ).outerjoin(
+        Property, Property.slug == Booking.tour
     ).filter(
         Booking.id == booking_id,
-        Tour.vendor_id == vendor_id,
+        or_(Tour.vendor_id == vendor_id, Property.vendor_id == vendor_id),
     ).first()
     if not booking:
         return {'error': 'Booking not found.'}, 404
 
-    requested_status = str(admin_payload().get('status', '')).strip()
-    transitions = {
-        'requested': {'confirmed', 'cancelled'},
-        'confirmed': {'in_preparation', 'cancelled'},
-        'in_preparation': {'completed', 'cancelled'},
-        'completed': set(),
-        'cancelled': set(),
-    }
+    requested_status = str(json_payload().get('status', '')).strip()
+    if booking.booking_type == 'property':
+        transitions = {
+            'requested': {'cancelled'},
+            'confirmed': {'completed', 'cancelled'},
+            'completed': set(),
+            'cancelled': set(),
+        }
+    else:
+        transitions = {
+            'requested': {'confirmed', 'cancelled'},
+            'confirmed': {'in_preparation', 'cancelled'},
+            'in_preparation': {'completed', 'cancelled'},
+            'completed': set(),
+            'cancelled': set(),
+        }
     if requested_status not in transitions.get(booking.status, set()):
         return {'error': 'That booking status transition is not allowed.'}, 409
     if requested_status != 'cancelled' and booking.payment_status != 'paid':
@@ -2410,7 +3978,7 @@ def vendor_update_booking_status(booking_id):
         if booking.payment_status == 'pending':
             return {'error': 'This booking has a pending M-Pesa request. Wait for its payment result before cancelling.'}, 409
         try:
-            release_schedule(booking.schedule_id, booking.guests)
+            release_booking_availability(booking)
         except ValueError as exc:
             db.session.rollback()
             return {'error': str(exc)}, 409
@@ -2428,14 +3996,14 @@ def vendor_create_tour():
     response = require_vendor_csrf()
     if response:
         return response
-    data = admin_payload()
+    data = json_payload()
     try:
         values = tour_values(data)
     except ValueError as exc:
         return {'error': str(exc)}, 400
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
     slug = unique_slug(str(data.get('slug') or values['name']), Tour)
     tour = Tour(slug=slug, vendor_id=vendor.id, **values)
     db.session.add(tour)
@@ -2451,29 +4019,66 @@ def vendor_update_tour(slug):
         return response
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
     tour = Tour.query.filter_by(slug=slug, vendor_id=vendor.id).first()
     if not tour:
         return {'error': 'Tour not found.'}, 404
     if request.method == 'DELETE':
-        schedules = TourSchedule.query.filter_by(tour_slug=tour.slug).all()
-        if any(schedule.booked_count for schedule in schedules):
-            return {'error': 'A tour with booked departures cannot be deleted. Cancel or complete its bookings first.'}, 409
-        for schedule in schedules:
-            db.session.delete(schedule)
-        Review.query.filter_by(target_type='tour', target_id=tour.slug).delete()
-        db.session.delete(tour)
-        db.session.commit()
+        if not delete_tour(tour):
+            return {'error': BOOKED_TOUR_DELETE_ERROR}, 409
         return '', 204
 
     try:
-        values = tour_values(admin_payload())
+        values = tour_values(json_payload())
     except ValueError as exc:
         return {'error': str(exc)}, 400
-    for field, value in values.items():
-        setattr(tour, field, value)
-    db.session.commit()
+    apply_values(tour, values)
     return {'tour': tour.to_dict()}
+
+
+@app.route('/api/vendor/services', methods=['POST'])
+@vendor_required
+def vendor_create_service():
+    response = require_vendor_csrf()
+    if response:
+        return response
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Partner sign-in is required.'}, 401
+    data = json_payload()
+    try:
+        values = service_values(data)
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    slug = unique_slug(str(data.get('slug') or values['name']), Service)
+    service = Service(slug=slug, vendor_id=vendor.id, **values)
+    db.session.add(service)
+    db.session.commit()
+    return {'service': service.to_dict()}, 201
+
+
+@app.route('/api/vendor/services/<string:slug>', methods=['PUT', 'DELETE'])
+@vendor_required
+def vendor_update_service(slug):
+    response = require_vendor_csrf()
+    if response:
+        return response
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Partner sign-in is required.'}, 401
+    service = Service.query.filter_by(slug=slug, vendor_id=vendor.id).first()
+    if not service:
+        return {'error': 'Service not found.'}, 404
+    if request.method == 'DELETE':
+        db.session.delete(service)
+        db.session.commit()
+        return '', 204
+    try:
+        values = service_values(json_payload())
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+    apply_values(service, values)
+    return {'service': service.to_dict()}
 
 
 @app.route('/api/vendor/properties', methods=['POST'])
@@ -2482,14 +4087,14 @@ def vendor_create_property():
     response = require_vendor_csrf()
     if response:
         return response
-    data = admin_payload()
+    data = json_payload()
     try:
         values = property_values(data)
     except ValueError as exc:
         return {'error': str(exc)}, 400
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
     slug = unique_slug(str(data.get('slug') or values['name']), Property)
     listing = Property(
         slug=slug,
@@ -2511,33 +4116,707 @@ def vendor_update_property(property_id):
         return response
     vendor = get_current_vendor()
     if vendor is None:
-        return {'error': 'Vendor sign-in is required.'}, 401
+        return {'error': 'Partner sign-in is required.'}, 401
     listing = Property.query.filter_by(id=property_id, vendor_id=vendor.id).first()
     if not listing:
         return {'error': 'Property not found.'}, 404
     if request.method == 'DELETE':
-        Review.query.filter_by(target_type='property', target_id=listing.slug).delete()
-        db.session.delete(listing)
-        db.session.commit()
+        delete_property(listing)
         return '', 204
 
     try:
-        values = property_values(admin_payload())
+        values = property_values(json_payload())
     except ValueError as exc:
         return {'error': str(exc)}, 400
-    for field, value in values.items():
-        setattr(listing, field, value)
-    db.session.commit()
+    apply_values(listing, values)
     return {'property': listing.to_dict()}
+
+
+def live_promotions(day=None):
+    """Map (listing_type, listing_slug) to the campaign running on a given day."""
+    day = day or datetime.now(KENYA_TIMEZONE).date()
+    rows = Promotion.query.filter(
+        Promotion.starts_on <= day,
+        Promotion.ends_on >= day,
+    ).all()
+    return {(row.listing_type, row.listing_slug): row for row in rows}
+
+
+def promotion_listing_name(promotion):
+    """Name of the promoted listing, or an empty string if it was removed."""
+    if promotion.listing_type == 'tour':
+        tour = db.session.get(Tour, promotion.listing_slug)
+        return tour.name if tour else ''
+    listing = Property.query.filter_by(slug=promotion.listing_slug).first()
+    return listing.name if listing else ''
 
 
 @app.route('/api/catalogue', methods=['GET'])
 def public_catalogue():
+    operators = {
+        operator.id: operator
+        for operator in VendorAccount.query.filter_by(is_active=True).all()
+    }
+    insights = catalogue_insights()
+    promotions = live_promotions()
+
+    tours = []
+    for tour in Tour.query.order_by(Tour.name).all():
+        item = tour.to_dict()
+        item.update(insights['tours'].get(tour.slug, {}))
+        promotion = promotions.get(('tour', tour.slug))
+        item['promotion'] = promotion.public_dict() if promotion else None
+        operator = operators.get(tour.vendor_id)
+        item['operator'] = operator.public_dict() if operator else None
+        tours.append(item)
+
+    properties = []
+    for listing in Property.query.order_by(Property.name).all():
+        item = listing.to_dict()
+        item.update(property_listing_insight(insights, listing))
+        promotion = promotions.get(('property', listing.slug))
+        item['promotion'] = promotion.public_dict() if promotion else None
+        operator = operators.get(listing.vendor_id)
+        item['operator'] = operator.public_dict() if operator else None
+        properties.append(item)
+
+    services = []
+    for service in Service.query.filter_by(is_active=True).order_by(Service.name).all():
+        item = service.to_dict()
+        operator = operators.get(service.vendor_id)
+        item['operator'] = operator.public_dict() if operator else None
+        services.append(item)
+
+    if promotions:
+        # Each catalogue render is one sponsored impression for every live slot.
+        for promotion in promotions.values():
+            promotion.impressions = (promotion.impressions or 0) + 1
+        db.session.commit()
+
     return {
-        'tours': [item.to_dict() for item in Tour.query.order_by(Tour.name).all()],
-        'properties': [item.to_dict() for item in Property.query.order_by(Property.name).all()],
+        'tours': tours,
+        'properties': properties,
+        'services': services,
+        'operators': [
+            operator.public_dict() for operator in operators.values() if operator.slug
+        ],
         'destinations': [item.to_dict() for item in Destination.query.order_by(Destination.name).all()],
         'whatsapp_business_phone': WHATSAPP_BUSINESS_PHONE,
+        'social_links': social_profile_links(),
+    }
+
+
+def property_listing_insight(insights, listing):
+    """Insight row for an accommodation, including listings without signals."""
+    fallback = {
+        'rating': 0,
+        'review_count': 0,
+        'paid_bookings': 0,
+        'recent_bookings': 0,
+        'price_from': int(listing.price_per_night or 0),
+        'price_to': int(listing.price_per_night or 0),
+        'room_types': 0,
+        'price_comparison': {'median': 0, 'difference_percent': 0.0, 'position': 'unknown', 'label': ''},
+        'badges': [],
+    }
+    return insights['properties'].get(listing.slug, fallback)
+
+
+@app.route('/api/operators/<string:slug>', methods=['GET'])
+@limiter.limit('120 per minute')
+def public_operator(slug):
+    """Public profile with everything one safari, tour or service operator sells."""
+    operator = VendorAccount.query.filter_by(slug=slug, is_active=True).first()
+    if not operator:
+        return {'error': 'Operator not found.'}, 404
+    profile = operator.public_dict()
+    insights = catalogue_insights()
+
+    tours = []
+    for tour in Tour.query.filter_by(vendor_id=operator.id).order_by(Tour.name).all():
+        item = tour.to_dict()
+        item.update(insights['tours'].get(tour.slug, {}))
+        item['operator'] = profile
+        tours.append(item)
+
+    properties = []
+    for listing in Property.query.filter_by(vendor_id=operator.id).order_by(Property.name).all():
+        item = listing.to_dict()
+        item.update(property_listing_insight(insights, listing))
+        item['operator'] = profile
+        properties.append(item)
+
+    services = []
+    for service in Service.query.filter_by(
+        vendor_id=operator.id, is_active=True
+    ).order_by(Service.name).all():
+        item = service.to_dict()
+        item['operator'] = profile
+        services.append(item)
+
+    return {
+        'operator': profile,
+        'tours': tours,
+        'properties': properties,
+        'services': services,
+    }
+
+
+SEARCH_MAX_QUERY_LENGTH = 120
+SEARCH_MAX_TERMS = 8
+SEARCH_MAX_CANDIDATES = 200
+SEARCH_DEFAULT_LIMIT = 20
+SEARCH_MAX_LIMIT = 50
+SEARCH_STOP_WORDS = {'a', 'an', 'and', 'at', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'with'}
+SEARCH_RESULT_TYPES = ('tour', 'accommodation', 'service', 'destination')
+SEARCH_RESULT_LABELS = {
+    'tour': 'Tour',
+    'accommodation': 'Accommodation',
+    'service': 'Service',
+    'destination': 'Place',
+}
+SEARCH_SORTS = ('relevance', 'price_low', 'price_high', 'rating', 'popular')
+SEARCH_SIGNAL_MAX_BOOST = 6.0
+EMPTY_LISTING_INSIGHT = {
+    'rating': 0,
+    'review_count': 0,
+    'paid_bookings': 0,
+    'recent_bookings': 0,
+    'price_from': 0,
+    'price_to': 0,
+    'room_types': 0,
+    'price_comparison': {'median': 0, 'difference_percent': 0.0, 'position': 'unknown', 'label': ''},
+    'badges': [],
+}
+
+
+def search_terms(query):
+    """Split a free-text query into unique, meaningful lowercase terms."""
+    words = re.findall(r'[0-9a-z\u00c0-\u024f]+', (query or '').lower())
+    terms = []
+    for word in words:
+        if word in SEARCH_STOP_WORDS or (len(word) < 2 and not word.isdigit()):
+            continue
+        if word not in terms:
+            terms.append(word)
+    return terms[:SEARCH_MAX_TERMS]
+
+
+def search_like_pattern(term):
+    """Build a LIKE pattern that treats user-supplied wildcards literally."""
+    escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return f'%{escaped}%'
+
+
+def search_column_filter(columns, terms):
+    """Match a row when any term appears in any of the given columns."""
+    return or_(*[
+        column.ilike(search_like_pattern(term), escape='\\')
+        for term in terms
+        for column in columns
+    ])
+
+
+def search_snippet(text, terms, limit=200):
+    """Trim body text to a short excerpt around the first matching term."""
+    collapsed = re.sub(r'\s+', ' ', text or '').strip()
+    if not collapsed:
+        return ''
+    lowered = collapsed.lower()
+    positions = [position for position in (lowered.find(term) for term in terms) if position >= 0]
+    if not positions:
+        excerpt = collapsed[:limit].rstrip()
+        return f'{excerpt}…' if len(collapsed) > limit else excerpt
+    start = max(0, min(positions) - 60)
+    end = min(len(collapsed), start + limit)
+    snippet = collapsed[start:end].strip()
+    if start > 0:
+        snippet = f'…{snippet}'
+    if end < len(collapsed):
+        snippet = f'{snippet}…'
+    return snippet
+
+
+def score_search_document(document, terms, phrase=''):
+    """Score one catalogue document; 0 means the row does not match."""
+    title = document['title'].lower()
+    keywords = [str(value).lower() for value in document.get('keywords') or [] if value]
+    body = (document.get('body') or '').lower()
+    haystack = ' '.join([title, *keywords, body])
+
+    score = 0
+    matched_terms = 0
+    for term in terms:
+        if term not in haystack:
+            continue
+        matched_terms += 1
+        score += 6
+        if title == term:
+            score += 40
+        elif title.startswith(term) or re.search(rf'\b{re.escape(term)}', title):
+            score += 24
+        elif term in title:
+            score += 14
+        if any(term in keyword for keyword in keywords):
+            score += 8
+        if term in body:
+            score += 3
+
+    if not matched_terms:
+        return 0
+    # Reward rows that contain the whole query, not just scattered words.
+    if phrase and phrase in haystack:
+        score += 30
+    return score
+
+
+def search_signal_score(insight):
+    """Small data boost so well-booked, well-rated listings float up on ties.
+
+    Kept well below the title-match weight so text relevance still wins.
+    """
+    rating = float(insight.get('rating') or 0)
+    review_count = int(insight.get('review_count') or 0)
+    paid_bookings = int(insight.get('paid_bookings') or 0)
+    recent_bookings = int(insight.get('recent_bookings') or 0)
+    score = 0.0
+    if review_count:
+        score += min(2.5, rating / 5 * 2.5)
+        score += min(1.0, math.log1p(review_count) / 2)
+    score += min(2.0, math.log1p(paid_bookings + recent_bookings * 2))
+    position = (insight.get('price_comparison') or {}).get('position')
+    if position == 'below':
+        score += 1.0
+    elif position == 'above':
+        score -= 0.5
+    return round(max(0.0, min(SEARCH_SIGNAL_MAX_BOOST, score)), 1)
+
+
+def sort_search_results(results, sort='relevance'):
+    """Order results by the requested data signal without mutating the input."""
+    if sort == 'price_low':
+        return sorted(results, key=lambda item: (
+            item['price'] is None, item['price'] or 0, -item['score'], item['title'].lower(),
+        ))
+    if sort == 'price_high':
+        return sorted(results, key=lambda item: (
+            item['price'] is None, -(item['price'] or 0), -item['score'], item['title'].lower(),
+        ))
+    if sort == 'rating':
+        return sorted(results, key=lambda item: (
+            -(item['rating'] or 0), -item['review_count'], -item['score'], item['title'].lower(),
+        ))
+    if sort == 'popular':
+        return sorted(results, key=lambda item: (
+            -item['paid_bookings'], -item['recent_bookings'], -(item['rating'] or 0), item['title'].lower(),
+        ))
+    return sorted(results, key=lambda item: (-item['score'], item['title'].lower()))
+
+
+def search_catalogue(query):
+    """Rank tours, safaris, accommodations, services and places against a query."""
+    terms = search_terms(query)
+    empty_counts = {result_type: 0 for result_type in SEARCH_RESULT_TYPES}
+    if not terms:
+        return [], empty_counts
+
+    phrase = ' '.join(terms)
+    insights = catalogue_insights()
+    destinations = Destination.query.order_by(Destination.name).all()
+    destination_names = {item.slug: item.name for item in destinations}
+    operators = {vendor.id: vendor for vendor in VendorAccount.query.all()}
+    matching_destination_slugs = [
+        item.slug for item in destinations
+        if any(term in f'{item.name} {item.description} {item.search_location}'.lower() for term in terms)
+    ]
+
+    documents = []
+
+    tour_filter = search_column_filter(
+        (Tour.name, Tour.description, Tour.category, Tour.itinerary, Tour.inclusions, Tour.pickup_point),
+        terms,
+    )
+    if matching_destination_slugs:
+        tour_filter = or_(tour_filter, Tour.destination.in_(matching_destination_slugs))
+    for tour in Tour.query.filter(tour_filter).limit(SEARCH_MAX_CANDIDATES).all():
+        destination_name = destination_names.get(tour.destination, tour.destination.replace('-', ' ').title())
+        operator = operators.get(tour.vendor_id)
+        documents.append({
+            'type': 'tour',
+            'slug': tour.slug,
+            'title': tour.name,
+            'subtitle': ' · '.join(part for part in (tour.category, destination_name) if part),
+            'keywords': (
+                tour.category,
+                destination_name,
+                tour.duration,
+                tour.pickup_point,
+                TOUR_TYPES.get(tour.tour_type or 'experience', ''),
+                operator.name if operator else '',
+            ),
+            'body': ' '.join(part for part in (tour.description, tour.itinerary, tour.inclusions) if part),
+            'image_url': tour.image_url,
+            'price': tour.price,
+            'price_unit': 'per guest',
+            'url': f'/tour-details.html?id={urllib.parse.quote(tour.slug)}',
+            'insight': insights['tours'].get(tour.slug, EMPTY_LISTING_INSIGHT),
+        })
+
+    accommodation_filter = search_column_filter(
+        (Property.name, Property.description, Property.property_type, Property.location, Property.amenities),
+        terms,
+    )
+    if matching_destination_slugs:
+        accommodation_filter = or_(accommodation_filter, Property.destination.in_(matching_destination_slugs))
+    for listing in Property.query.filter(accommodation_filter).limit(SEARCH_MAX_CANDIDATES).all():
+        insight = insights['properties'].get(listing.slug, EMPTY_LISTING_INSIGHT)
+        documents.append({
+            'type': 'accommodation',
+            'slug': listing.slug or '',
+            'title': listing.name,
+            'subtitle': ' · '.join(part for part in (listing.property_type.title(), listing.location) if part),
+            'keywords': (
+                listing.property_type,
+                listing.location,
+                destination_names.get(listing.destination, ''),
+                listing.amenities,
+            ),
+            'body': listing.description,
+            'image_url': listing.image_url,
+            'price': insight.get('price_from') or listing.price_per_night,
+            'price_unit': 'per night',
+            'url': (
+                f'/booking.html?stay={urllib.parse.quote(listing.slug)}&guests={listing.guests}'
+                if listing.slug else '/booking.html'
+            ),
+            'insight': insight,
+        })
+
+    service_filter = search_column_filter(
+        (
+            Service.name,
+            Service.description,
+            Service.location,
+            Service.coverage,
+            Service.inclusions,
+        ),
+        terms,
+    )
+    if matching_destination_slugs:
+        service_filter = or_(service_filter, Service.destination.in_(matching_destination_slugs))
+    service_query = Service.query.outerjoin(
+        VendorAccount, VendorAccount.id == Service.vendor_id
+    ).filter(
+        Service.is_active.is_(True),
+        or_(service_filter, search_column_filter((VendorAccount.name,), terms)),
+    )
+    for service in service_query.limit(SEARCH_MAX_CANDIDATES).all():
+        operator = operators.get(service.vendor_id)
+        destination_name = destination_names.get(
+            service.destination, service.destination.replace('-', ' ').title()
+        )
+        documents.append({
+            'type': 'service',
+            'slug': service.slug,
+            'title': service.name,
+            'subtitle': ' · '.join(part for part in (
+                SERVICE_TYPES.get(service.service_type, ''), destination_name,
+            ) if part),
+            'keywords': (
+                SERVICE_TYPES.get(service.service_type, ''),
+                service.location,
+                destination_name,
+                service.coverage,
+                operator.name if operator else '',
+            ),
+            'body': ' '.join(part for part in (service.description, service.inclusions) if part),
+            'image_url': service.image_url,
+            'price': service.price_from,
+            'price_unit': service.price_unit,
+            'url': (
+                f'/operators/{urllib.parse.quote(operator.slug)}#service-{urllib.parse.quote(service.slug)}'
+                if operator and operator.slug else '/services.html'
+            ),
+            'insight': EMPTY_LISTING_INSIGHT,
+        })
+
+    for item in destinations:
+        documents.append({
+            'type': 'destination',
+            'slug': item.slug,
+            'title': item.name,
+            'subtitle': item.search_location or 'Kenya',
+            'keywords': (item.search_location, item.site_type),
+            'body': item.description,
+            'image_url': item.image_url,
+            'price': None,
+            'price_unit': '',
+            'url': f'/tours.html?destination={urllib.parse.quote(item.slug)}',
+            'insight': EMPTY_LISTING_INSIGHT,
+        })
+
+    ranked = []
+    for document in documents:
+        relevance = score_search_document(document, terms, phrase)
+        if not relevance:
+            continue
+        insight = document.get('insight') or EMPTY_LISTING_INSIGHT
+        signal = search_signal_score(insight) if document['type'] != 'destination' else 0.0
+        ranked.append({
+            'type': document['type'],
+            'type_label': SEARCH_RESULT_LABELS[document['type']],
+            'slug': document['slug'],
+            'title': document['title'],
+            'subtitle': document['subtitle'],
+            'snippet': search_snippet(document.get('body'), terms),
+            'image_url': document['image_url'],
+            'price': document['price'],
+            'price_to': insight.get('price_to') or document['price'],
+            'price_unit': document['price_unit'],
+            'room_types': insight.get('room_types', 0),
+            'url': document['url'],
+            'score': round(relevance + signal, 1),
+            'relevance_score': relevance,
+            'signal_score': signal,
+            'rating': insight.get('rating', 0),
+            'review_count': insight.get('review_count', 0),
+            'paid_bookings': insight.get('paid_bookings', 0),
+            'recent_bookings': insight.get('recent_bookings', 0),
+            'badges': insight.get('badges', []),
+            'price_comparison': insight.get('price_comparison', EMPTY_LISTING_INSIGHT['price_comparison']),
+        })
+
+    ranked.sort(key=lambda item: (-item['score'], item['title'].lower()))
+    counts = {result_type: 0 for result_type in SEARCH_RESULT_TYPES}
+    for result in ranked:
+        counts[result['type']] += 1
+    return ranked, counts
+
+
+def attach_search_promotions(results):
+    """Attach a running sponsored placement to tour and accommodation results."""
+    promotions = live_promotions()
+    for result in results:
+        listing_type = {'tour': 'tour', 'accommodation': 'property'}.get(result.get('type'))
+        campaign = promotions.get((listing_type, result.get('slug'))) if listing_type and result.get('slug') else None
+        result['promotion'] = campaign.public_dict() if campaign else None
+    return results
+
+
+@app.route('/api/search', methods=['GET'])
+@limiter.limit('180 per minute')
+def public_search():
+    query = (request.args.get('q') or '').strip()[:SEARCH_MAX_QUERY_LENGTH]
+    terms = search_terms(query)
+    if not terms:
+        return {'error': 'Enter at least two letters to search.'}, 400
+
+    result_type = (request.args.get('type') or 'all').strip().lower()
+    if result_type not in ('all', *SEARCH_RESULT_TYPES):
+        return {'error': 'Unknown search type.'}, 400
+
+    sort = (request.args.get('sort') or 'relevance').strip().lower()
+    if sort not in SEARCH_SORTS:
+        return {'error': 'Unknown search order.'}, 400
+
+    try:
+        limit = int(request.args.get('limit', SEARCH_DEFAULT_LIMIT))
+    except (TypeError, ValueError):
+        return {'error': 'Limit must be a whole number.'}, 400
+    limit = max(1, min(limit, SEARCH_MAX_LIMIT))
+
+    results, counts = search_catalogue(query)
+    if result_type != 'all':
+        results = [result for result in results if result['type'] == result_type]
+    results = attach_search_promotions(results)
+    results = sort_search_results(results, sort)
+    if sort == 'relevance':
+        # Sponsored results lead only the default order; price or rating sorts stay truthful.
+        results.sort(key=lambda result: -(result['promotion']['rank'] if result.get('promotion') else 0))
+
+    return {
+        'query': query,
+        'terms': terms,
+        'type': result_type,
+        'sort': sort,
+        'counts': counts,
+        'total': len(results),
+        'results': results[:limit],
+    }
+
+
+RECOMMENDATION_DEFAULT_LIMIT = 3
+RECOMMENDATION_MAX_LIMIT = 6
+RECOMMENDATION_TYPES = ('tour', 'accommodation')
+
+
+def discovery_listing(kind, listing, insight, destination_names):
+    """Public listing summary enriched with the data signals used for ranking."""
+    destination = listing.destination or ''
+    summary = {
+        'type': kind,
+        'type_label': SEARCH_RESULT_LABELS['tour'] if kind == 'tour' else SEARCH_RESULT_LABELS['accommodation'],
+        'slug': listing.slug,
+        'name': listing.name,
+        'destination': destination,
+        'location': destination_names.get(destination, destination.replace('-', ' ').title()),
+        'image_url': listing.image_url,
+        'rating': insight.get('rating', 0),
+        'review_count': insight.get('review_count', 0),
+        'paid_bookings': insight.get('paid_bookings', 0),
+        'recent_bookings': insight.get('recent_bookings', 0),
+        'badges': insight.get('badges', []),
+        'price_comparison': insight.get('price_comparison', EMPTY_LISTING_INSIGHT['price_comparison']),
+        'room_types': insight.get('room_types', 0),
+    }
+    if kind == 'tour':
+        summary.update({
+            'category': listing.category,
+            'price_from': int(insight.get('price_from') or listing.price or 0),
+            'price_to': int(insight.get('price_to') or listing.price or 0),
+            'price_unit': 'per guest',
+            'url': f'/tour-details.html?id={urllib.parse.quote(listing.slug)}',
+        })
+    else:
+        summary.update({
+            'category': listing.property_type.title(),
+            'price_from': int(insight.get('price_from') or listing.price_per_night or 0),
+            'price_to': int(insight.get('price_to') or listing.price_per_night or 0),
+            'price_unit': 'per night',
+            'url': (
+                f'/booking.html?stay={urllib.parse.quote(listing.slug)}&guests={listing.guests}'
+                if listing.slug else '/booking.html'
+            ),
+        })
+    return summary
+
+
+def recommendation_similarity(seed, candidate):
+    """Score how closely one listing resembles the one being viewed."""
+    score = 0.0
+    if seed['destination'] and seed['destination'] == candidate['destination']:
+        score += 4
+    if seed['category'] and seed['category'] == candidate['category']:
+        score += 3
+    seed_price = float(seed['price_from'] or 0)
+    candidate_price = float(candidate['price_from'] or 0)
+    if seed_price and candidate_price:
+        difference = abs(candidate_price - seed_price) / seed_price
+        if difference <= 0.25:
+            score += 2
+        elif difference <= 0.5:
+            score += 1
+    score += min(2.0, float(candidate['rating'] or 0) / 5 * 2)
+    score += min(2.0, math.log1p(candidate['paid_bookings']))
+    return round(score, 2)
+
+
+def recommendation_reason(seed, candidate, basis):
+    """Short, translatable explanation for why a listing is recommended."""
+    if basis == 'trending':
+        if candidate['recent_bookings'] >= DISCOVERY_POPULAR_MIN_RECENT:
+            return 'Trending now'
+        if 'Top rated' in candidate['badges']:
+            return 'Top rated'
+        if 'Best value' in candidate['badges']:
+            return 'Best value'
+        return 'Popular with travelers'
+    same_destination = seed.get('destination') and seed['destination'] == candidate['destination']
+    same_style = seed.get('category') and seed['category'] == candidate['category']
+    if same_destination and same_style:
+        return 'Same destination and style'
+    if same_destination:
+        return 'Same destination'
+    if same_style:
+        return 'Similar style'
+    if candidate['badges']:
+        return candidate['badges'][0]
+    return 'Popular with travelers'
+
+
+@app.route('/api/recommendations', methods=['GET'])
+@limiter.limit('180 per minute')
+def public_recommendations():
+    """Recommend listings from ratings, verified bookings and price fit."""
+    kind = (request.args.get('type') or '').strip().lower()
+    if kind and kind not in RECOMMENDATION_TYPES:
+        return {'error': 'Unknown recommendation type.'}, 400
+    slug = (request.args.get('slug') or '').strip()[:160]
+    destination = (request.args.get('destination') or '').strip()[:120]
+    excluded = {
+        value.strip() for value in (request.args.get('exclude') or '').split(',') if value.strip()
+    }
+    try:
+        limit = int(request.args.get('limit', RECOMMENDATION_DEFAULT_LIMIT))
+    except (TypeError, ValueError):
+        return {'error': 'Limit must be a whole number.'}, 400
+    limit = max(1, min(limit, RECOMMENDATION_MAX_LIMIT))
+
+    insights = catalogue_insights()
+    destination_names = {item.slug: item.name for item in Destination.query.all()}
+
+    seed = None
+    if slug:
+        tour = db.session.get(Tour, slug) if kind in ('', 'tour') else None
+        if tour is not None:
+            seed = discovery_listing(
+                'tour', tour, insights['tours'].get(tour.slug, EMPTY_LISTING_INSIGHT), destination_names,
+            )
+            kind = 'tour'
+        if seed is None and kind in ('', 'accommodation'):
+            listing = Property.query.filter_by(slug=slug).first()
+            if listing is not None:
+                seed = discovery_listing(
+                    'accommodation', listing,
+                    insights['properties'].get(listing.slug, EMPTY_LISTING_INSIGHT), destination_names,
+                )
+                kind = 'accommodation'
+
+    candidates = []
+    if kind in ('', 'tour'):
+        candidates.extend(
+            discovery_listing('tour', tour, insights['tours'].get(tour.slug, EMPTY_LISTING_INSIGHT), destination_names)
+            for tour in Tour.query.all()
+        )
+    if kind in ('', 'accommodation'):
+        candidates.extend(
+            discovery_listing(
+                'accommodation', listing,
+                insights['properties'].get(listing.slug, EMPTY_LISTING_INSIGHT), destination_names,
+            )
+            for listing in Property.query.all()
+            if listing.slug
+        )
+    candidates = [
+        item for item in candidates
+        if item['slug'] != slug
+        and item['slug'] not in excluded
+        and (not destination or item['destination'] == destination)
+    ]
+
+    basis = 'similar' if seed else 'trending'
+    if seed:
+        candidates.sort(key=lambda item: (
+            -recommendation_similarity(seed, item),
+            -(item['rating'] or 0),
+            -item['paid_bookings'],
+            item['name'].lower(),
+        ))
+    else:
+        candidates.sort(key=lambda item: (
+            -item['recent_bookings'],
+            -item['paid_bookings'],
+            -(item['rating'] or 0),
+            item['name'].lower(),
+        ))
+
+    return {
+        'basis': basis,
+        'seed': {'type': seed['type'], 'slug': seed['slug'], 'name': seed['name']} if seed else None,
+        'recommendations': [
+            {**item, 'reason': recommendation_reason(seed or {}, item, basis)}
+            for item in candidates[:limit]
+        ],
     }
 
 
@@ -2699,7 +4978,16 @@ def register():
     session['user_id'] = user.id
     session['user_name'] = user.name
     session['customer_csrf'] = secrets.token_urlsafe(32)
-    return redirect('/my-bookings')
+    return redirect(customer_sign_in_redirect(request.form.get('next'), '/my-bookings'))
+
+
+CUSTOMER_SIGN_IN_REDIRECTS = {'/wishlist.html', '/my-bookings', '/booking.html'}
+
+
+def customer_sign_in_redirect(requested, default='/booking.html'):
+    """Continue to the page that asked for sign-in, but only for known internal pages."""
+    return requested if requested in CUSTOMER_SIGN_IN_REDIRECTS else default
+
 
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit('10 per hour', key_func=auth_account_key, methods=['POST'], deduct_when=failed_auth_attempt)
@@ -2719,7 +5007,7 @@ def login():
     session['user_id'] = user.id
     session['user_name'] = user.name
     session['customer_csrf'] = secrets.token_urlsafe(32)
-    return redirect('/booking.html')
+    return redirect(customer_sign_in_redirect(request.form.get('next')))
 
 @app.route('/logout', methods=['POST'])
 @customer_required
@@ -2741,6 +5029,17 @@ def booking_change_deadline(booking):
         raise ValueError('Bookings can only be cancelled or rescheduled at least 48 hours before departure.')
 
 
+def booking_stay_change_deadline(booking):
+    window_hours = int(get_admin_setting('cancellation_window_hours', 48))
+    try:
+        cutoff = check_in_cutoff(booking.check_in, window_hours)
+    except ValueError as exc:
+        raise ValueError('This stay has an invalid check-in date and cannot be changed online.') from exc
+    now = datetime.now(KENYA_TIMEZONE).replace(tzinfo=None)
+    if cutoff - now < timedelta(0):
+        raise ValueError(f'Stay bookings can only be cancelled at least {window_hours} hours before check-in.')
+
+
 @app.route('/api/customer/profile', methods=['GET'])
 @customer_required
 def customer_profile():
@@ -2757,10 +5056,200 @@ def customer_bookings():
     user = db.session.get(User, session['user_id'])
     if user is None:
         return {'error': 'Sign in to view and manage your bookings.'}, 401
-    return {'bookings': [
-        item.to_dict()
-        for item in Booking.query.filter_by(user_id=user.id).order_by(Booking.created_at.desc()).all()
-    ]}
+    bookings = Booking.query.filter_by(user_id=user.id).order_by(Booking.created_at.desc()).all()
+    stay_slugs = {booking.tour for booking in bookings if booking.booking_type == 'property'}
+    stay_names = {
+        listing.slug: listing.name for listing in Property.query.filter(Property.slug.in_(stay_slugs)).all()
+    } if stay_slugs else {}
+    tour_slugs = {booking.tour for booking in bookings if booking.booking_type != 'property'}
+    known_tours = {
+        tour.slug for tour in Tour.query.filter(Tour.slug.in_(tour_slugs)).all()
+    } if tour_slugs else set()
+    booked_rooms = {booking.room_id for booking in bookings if booking.room_id}
+    room_names = {
+        room.id: room.name for room in PropertyRoom.query.filter(PropertyRoom.id.in_(booked_rooms)).all()
+    } if booked_rooms else {}
+    booking_ids = [booking.id for booking in bookings]
+    reviewed = {
+        review.booking_id: review
+        for review in Review.query.filter(Review.booking_id.in_(booking_ids)).all()
+    } if booking_ids else {}
+    rows = []
+    for booking in bookings:
+        row = booking.to_dict()
+        if booking.booking_type == 'property':
+            row['property_name'] = stay_names.get(booking.tour) or booking.tour.replace('-', ' ').title()
+            row['room_name'] = room_names.get(booking.room_id, '')
+        review = reviewed.get(booking.id)
+        can_review, review_status = review_capability(booking, review)
+        live_listing = booking.tour in (stay_names if booking.booking_type == 'property' else known_tours)
+        if can_review and not live_listing:
+            can_review, review_status = False, 'ineligible'
+        row['can_review'] = can_review
+        row['review_status'] = review_status
+        row['review'] = review.to_dict() if review else None
+        rows.append(row)
+    return {'bookings': rows, 'pending_reviews': sum(1 for row in rows if row['can_review'])}
+
+
+WISHLIST_LIMIT = 100
+WISHLIST_LISTING_TYPES = {'tour', 'property'}
+
+
+def saved_listing_payload(row, tours, properties, insights, destination_names):
+    """Card data for one saved listing; removed listings stay until deleted."""
+    listing = tours.get(row.listing_slug) if row.listing_type == 'tour' else properties.get(row.listing_slug)
+    payload = {
+        **row.to_dict(),
+        'listing_type_label': 'Experience' if row.listing_type == 'tour' else 'Place to stay',
+        'name': row.listing_slug.replace('-', ' ').title(),
+        'image_url': None,
+        'destination': '',
+        'destination_name': '',
+        'price': 0,
+        'price_unit': 'per guest' if row.listing_type == 'tour' else 'per night',
+        'rating': 0,
+        'review_count': 0,
+        'url': '',
+        'still_listed': listing is not None,
+    }
+    if listing is None:
+        return payload
+
+    if row.listing_type == 'tour':
+        insight = insights['tours'].get(listing.slug) or {}
+        payload.update({
+            'name': listing.name,
+            'image_url': listing.image_url,
+            'destination': listing.destination,
+            'price': int(listing.price or 0),
+            'url': f'/tour-details.html?id={urllib.parse.quote(listing.slug)}',
+        })
+    else:
+        insight = property_listing_insight(insights, listing)
+        payload.update({
+            'name': listing.name,
+            'image_url': listing.image_url,
+            'destination': listing.destination,
+            'price': int(insight.get('price_from') or listing.price_per_night or 0),
+            'url': (
+                f'/booking.html?stay={urllib.parse.quote(listing.slug)}&guests={listing.guests}'
+                if listing.slug else ''
+            ),
+        })
+    payload.update({
+        'destination_name': destination_names.get(
+            listing.destination, (listing.destination or '').replace('-', ' ').title()
+        ),
+        'rating': insight.get('rating') or 0,
+        'review_count': insight.get('review_count') or 0,
+    })
+    return payload
+
+
+def saved_listing_payloads(rows):
+    tours = {tour.slug: tour for tour in Tour.query.all()}
+    properties = {listing.slug: listing for listing in Property.query.all() if listing.slug}
+    insights = catalogue_insights()
+    destination_names = {item.slug: item.name for item in Destination.query.all()}
+    return [saved_listing_payload(row, tours, properties, insights, destination_names) for row in rows]
+
+
+@app.route('/api/customer/saved', methods=['GET'])
+@customer_required
+@limiter.limit('240 per minute')
+def customer_saved_items():
+    """The signed-in customer's wishlist, resolved against the live catalogue."""
+    user = db.session.get(User, session['user_id'])
+    if user is None:
+        return {'error': 'Sign in to see your saved listings.'}, 401
+    session.setdefault('customer_csrf', secrets.token_urlsafe(32))
+    rows = SavedItem.query.filter_by(user_id=user.id).order_by(
+        SavedItem.created_at.desc(), SavedItem.id.desc()
+    ).all()
+    items = saved_listing_payloads(rows)
+    return {
+        'items': items,
+        'count': len(items),
+        'limit': WISHLIST_LIMIT,
+        'csrf_token': session['customer_csrf'],
+    }
+
+
+@app.route('/api/customer/saved', methods=['POST'])
+@customer_required
+@limiter.limit('120 per hour', methods=['POST'])
+def customer_save_listing():
+    """Save one tour or stay to the wishlist; saving twice is not an error."""
+    response = require_customer_csrf()
+    if response:
+        return response
+    data = json_payload()
+    listing_type = str(data.get('listing_type') or '').strip().lower()
+    listing_slug = str(data.get('listing_slug') or '').strip()
+    if listing_type not in WISHLIST_LISTING_TYPES:
+        return {'error': 'Choose a tour or a place to stay to save.'}, 400
+    if not listing_slug or len(listing_slug) > 160:
+        return {'error': 'Choose a listing to save.'}, 400
+
+    listing = (
+        Tour.query.filter_by(slug=listing_slug).first()
+        if listing_type == 'tour'
+        else Property.query.filter_by(slug=listing_slug).first()
+    )
+    if listing is None:
+        return {'error': 'That listing is no longer available.'}, 404
+
+    user_id = session['user_id']
+    existing = SavedItem.query.filter_by(
+        user_id=user_id, listing_type=listing_type, listing_slug=listing_slug,
+    ).first()
+    if existing is not None:
+        return {'item': saved_listing_payloads([existing])[0], 'already_saved': True}, 200
+
+    if SavedItem.query.filter_by(user_id=user_id).count() >= WISHLIST_LIMIT:
+        return {
+            'error': f'Your wishlist is full. Remove a few listings before adding more (up to {WISHLIST_LIMIT}).',
+        }, 409
+
+    row = SavedItem(user_id=user_id, listing_type=listing_type, listing_slug=listing_slug)
+    db.session.add(row)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        saved = SavedItem.query.filter_by(
+            user_id=user_id, listing_type=listing_type, listing_slug=listing_slug,
+        ).first()
+        if saved is None:
+            return {'error': 'This listing could not be saved.'}, 409
+        return {'item': saved_listing_payloads([saved])[0], 'already_saved': True}, 200
+    return {'item': saved_listing_payloads([row])[0], 'already_saved': False}, 201
+
+
+@app.route('/api/customer/saved/<int:item_id>', methods=['DELETE'])
+@customer_required
+def customer_remove_saved_item(item_id):
+    response = require_customer_csrf()
+    if response:
+        return response
+    row = SavedItem.query.filter_by(id=item_id, user_id=session['user_id']).first()
+    if row is None:
+        return {'error': 'That saved listing was not found.'}, 404
+    db.session.delete(row)
+    db.session.commit()
+    return {'removed': item_id}, 200
+
+
+@app.route('/api/customer/saved', methods=['DELETE'])
+@customer_required
+def customer_clear_saved_items():
+    response = require_customer_csrf()
+    if response:
+        return response
+    removed = SavedItem.query.filter_by(user_id=session['user_id']).delete()
+    db.session.commit()
+    return {'removed': removed}, 200
 
 
 @app.route('/api/customer/bookings/<int:booking_id>/cancel', methods=['POST'])
@@ -2777,16 +5266,22 @@ def customer_cancel_booking(booking_id):
     if booking.payment_status == 'pending':
         return {'error': 'Your M-Pesa request is still pending. Wait for its payment result before cancelling.'}, 409
     try:
-        booking_change_deadline(booking)
-        release_schedule(booking.schedule_id, booking.guests)
+        if booking.booking_type == 'property':
+            booking_stay_change_deadline(booking)
+        else:
+            booking_change_deadline(booking)
+        release_booking_availability(booking)
     except ValueError as exc:
         db.session.rollback()
         return {'error': str(exc)}, 400
     booking.status = 'cancelled'
     if booking.payment_status == 'pending':
         booking.payment_status = 'cancelled'
+    refund_queued = queue_cancellation_refund(booking, 'customer')
     db.session.commit()
-    return {'booking': booking.to_dict()}
+    if refund_queued:
+        send_refund_notification(booking, paid=False)
+    return {'booking': booking.to_dict(), 'refund_queued': refund_queued}
 
 
 @app.route('/api/customer/bookings/<int:booking_id>/reschedule', methods=['POST'])
@@ -2800,7 +5295,9 @@ def customer_reschedule_booking(booking_id):
         return {'error': 'Booking not found.'}, 404
     if booking.status not in {'requested', 'confirmed'}:
         return {'error': 'Only requested or confirmed bookings can be rescheduled.'}, 409
-    data = admin_payload()
+    if booking.booking_type == 'property':
+        return {'error': 'Stay bookings cannot be rescheduled online. Cancel and book new dates instead.'}, 409
+    data = json_payload()
     try:
         booking_change_deadline(booking)
     except ValueError as exc:
@@ -2831,53 +5328,60 @@ def properties():
     listings = Property.query.order_by(Property.name).all()
     return {'properties': [property_listing.to_dict() for property_listing in listings]}
 
+
 @app.route('/review-submit', methods=['POST'])
 @limiter.limit('5 per hour', methods=['POST'])
 def review_submit():
+    """Publish a review for a paid booking the signed-in customer already used."""
     data = request.get_json(silent=True) if request.is_json else request.form
     data = data or {}
+    user = db.session.get(User, session['user_id']) if session.get('user_id') else None
+    if user is None or not user.is_active:
+        return {'error': 'Sign in to review a booking from your account.'}, 401
+    response = require_customer_csrf()
+    if response:
+        return response
     try:
-        rating = int(data.get('rating', '0'))
+        booking_id = int(data.get('booking_id') or 0)
+    except (TypeError, ValueError):
+        booking_id = 0
+    booking = Booking.query.filter_by(id=booking_id, user_id=user.id).first()
+    if booking is None:
+        return {'error': 'Choose a booking from your account to review.'}, 404
+    target_type, target_id, place = booking_review_target(booking)
+    if target_type is None:
+        return {'error': 'This booking is no longer linked to a listing.'}, 409
+    can_review, reason, _ = booking_review_state(booking)
+    if not can_review:
+        return {'error': review_blocked_message(reason)}, 409
+
+    try:
+        rating = int(data.get('rating', 0))
     except (TypeError, ValueError):
         rating = 0
+    comment = str(data.get('comment', '')).strip()
+    if rating not in range(1, 6) or not comment or len(comment) > 3000:
+        return {'error': 'Choose a star rating and write a review of up to 3,000 characters.'}, 400
 
-    review_data = {
-        'reviewer_name': str(data.get('reviewer_name', '')).strip(),
-        'reviewer_email': str(data.get('reviewer_email', '')).strip().lower(),
-        'place': '',
-        'target_type': str(data.get('target_type', '')).strip(),
-        'target_id': str(data.get('target_id', '')).strip(),
-        'rating': rating,
-        'comment': str(data.get('comment', '')).strip(),
-    }
-    target = None
-    if review_data['target_type'] == 'tour':
-        target = db.session.get(Tour, review_data['target_id'])
-        review_data['place'] = target.name if target else ''
-    elif review_data['target_type'] == 'property':
-        target = Property.query.filter_by(slug=review_data['target_id']).first()
-        review_data['place'] = target.name if target else ''
-    if (
-        not target
-        or not review_data['reviewer_name']
-        or len(review_data['reviewer_name']) > 100
-        or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', review_data['reviewer_email'])
-        or len(review_data['reviewer_email']) > 120
-        or not review_data['comment']
-        or len(review_data['comment']) > 3000
-        or len(review_data['target_id']) > 160
-        or rating not in range(1, 6)
-    ):
-        if request.is_json:
-            return {'error': 'Complete the review form and select a valid tour or property.'}, 400
-        return redirect('/tours.html?review_error=Complete%20the%20review%20form%20and%20choose%20a%20listing#reviews')
-
-    review = Review(**review_data)
+    review = Review(
+        booking_id=booking.id,
+        user_id=user.id,
+        reviewer_name=user.name,
+        reviewer_email=user.email,
+        place=place,
+        target_type=target_type,
+        target_id=target_id,
+        rating=rating,
+        comment=comment,
+    )
     db.session.add(review)
-    db.session.commit()
-    if request.is_json:
-        return {'review': review.to_dict()}, 201
-    return redirect('/tours.html?review_success=Your%20review%20was%20published#reviews')
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return {'error': review_blocked_message('reviewed')}, 409
+    return {'review': review.to_dict(), 'can_review': False}, 201
+
 
 @app.route('/reviews', methods=['GET'])
 def reviews():
@@ -2887,7 +5391,70 @@ def reviews():
     if target_type and target_id:
         query = query.filter_by(target_type=target_type, target_id=target_id)
     recent_reviews = query.order_by(Review.created_at.desc()).limit(50).all()
-    return {'reviews': [review.to_dict() for review in recent_reviews]}
+    summary = {'rating': 0, 'review_count': 0}
+    if target_type and target_id:
+        summary = review_ratings(target_type, [target_id]).get(target_id, summary)
+    return {'reviews': [review.to_dict() for review in recent_reviews], 'summary': summary}
+
+
+COMMUNITY_REVIEW_TYPES = {'tour': 'Experience', 'property': 'Place to stay'}
+
+
+@app.route('/api/community/reviews', methods=['GET'])
+@limiter.limit('120 per minute')
+def community_reviews():
+    """Recent guest reviews across every listing, linked back to what was reviewed."""
+    try:
+        limit = min(max(int(request.args.get('limit', 24)), 1), 60)
+    except (TypeError, ValueError):
+        return {'error': 'Limit must be a whole number.'}, 400
+    target_type = (request.args.get('target_type') or '').strip().lower()
+    if target_type and target_type not in COMMUNITY_REVIEW_TYPES:
+        return {'error': 'Choose tour or property reviews.'}, 400
+
+    query = Review.query.filter(Review.target_type.in_(tuple(COMMUNITY_REVIEW_TYPES)))
+    if target_type:
+        query = query.filter(Review.target_type == target_type)
+    rows = query.order_by(Review.created_at.desc()).limit(limit).all()
+
+    tours = {tour.slug: tour for tour in Tour.query.all()}
+    stays = {listing.slug: listing for listing in Property.query.all()}
+    reviews = []
+    for review in rows:
+        listing = tours.get(review.target_id) if review.target_type == 'tour' else stays.get(review.target_id)
+        if not listing:
+            continue
+        reviews.append({
+            **review.to_dict(),
+            'listing_name': listing.name,
+            'listing_image': listing.image_url,
+            'destination': listing.destination,
+            'url': (
+                f'/tour-details.html?id={urllib.parse.quote(review.target_id)}'
+                if review.target_type == 'tour'
+                else f'/booking.html?stay={urllib.parse.quote(review.target_id)}'
+            ),
+        })
+
+    distribution = {star: 0 for star in (5, 4, 3, 2, 1)}
+    ratings = [review.rating for review in rows]
+    for rating in ratings:
+        if rating in distribution:
+            distribution[rating] += 1
+    total = len(ratings)
+    return {
+        'reviews': reviews,
+        'summary': {
+            'review_count': total,
+            'rating': round(sum(ratings) / total, 2) if total else 0,
+            'distribution': [
+                {'rating': star, 'count': count, 'share': round(count / total * 100) if total else 0}
+                for star, count in distribution.items()
+            ],
+            'tour_count': Review.query.filter_by(target_type='tour').count(),
+            'property_count': Review.query.filter_by(target_type='property').count(),
+        },
+    }
 
 
 @app.route('/hospitality.html')
@@ -2928,6 +5495,34 @@ def static_files(filename):
         return send_from_directory(BASE_DIR, filename)
     return {'error': 'Not found'}, 404
 
+@app.route('/api/newsletter', methods=['POST'])
+@limiter.limit('10 per hour', methods=['POST'])
+def newsletter_signup():
+    """Collect newsletter addresses from the footer and home page forms."""
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    payload = payload or {}
+    email = str(payload.get('email') or '').strip().lower()[:160]
+    if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
+        return {'error': 'Enter a valid email address.'}, 400
+    source = re.sub(r'[^a-z0-9_-]', '', str(payload.get('source') or 'website').lower())[:40] or 'website'
+
+    subscriber = NewsletterSubscriber.query.filter_by(email=email).first()
+    if subscriber:
+        if not subscriber.is_active:
+            subscriber.is_active = True
+            subscriber.source = source
+            db.session.commit()
+        return {'message': 'You are already on the list.', 'already_subscribed': True}, 200
+
+    db.session.add(NewsletterSubscriber(email=email, source=source))
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return {'message': 'You are already on the list.', 'already_subscribed': True}, 200
+    return {'message': 'You are on the list. Karibu!', 'already_subscribed': False}, 201
+
+
 @app.route('/contact-submit', methods=['POST'])
 @limiter.limit('10 per hour', methods=['POST'])
 def contact_submit():
@@ -2951,6 +5546,13 @@ def contact_submit():
 
     return redirect('/contact.html?sent=1')
 
+def booking_request_error(message, status_code):
+    """Return a booking validation error as JSON or as a legacy form redirect."""
+    if request.is_json:
+        return {'error': message}, status_code
+    return redirect('/booking.html?error=' + urllib.parse.quote(message))
+
+
 @app.route('/booking-confirmation', methods=['POST'])
 @limiter.limit('10 per hour', methods=['POST'])
 def booking_confirmation():
@@ -2973,16 +5575,62 @@ def booking_confirmation():
 
     tour = str(data.get('tour', ''))
     guests = data.get('guests', '1')
-    try:
-        guest_count = int(guests)
-        total_amount = calculate_booking_price(tour, guest_count)
-    except (TypeError, ValueError):
-        message = 'Please select a valid tour and guest count.'
-        if request.is_json:
-            return {'error': message}, 400
-        return redirect('/booking.html?error=Please%20select%20a%20valid%20tour%20and%20guest%20count')
+    wants_stay = (
+        str(data.get('booking_type', '')).strip().lower() == 'property'
+        or bool(str(data.get('room_id', '')).strip())
+    )
 
-    tour_item = db.session.get(Tour, tour)
+    stay = None
+    if wants_stay:
+        property_listing = Property.query.filter_by(slug=tour).first()
+        if property_listing is None:
+            return booking_request_error('Choose an available accommodation before booking.', 400)
+        try:
+            guest_count = int(guests)
+            room_id = int(data.get('room_id') or 0)
+        except (TypeError, ValueError):
+            return booking_request_error('Choose a room and the number of guests.', 400)
+        room = PropertyRoom.query.filter_by(
+            id=room_id, property_id=property_listing.id, is_active=True
+        ).first()
+        if room is None:
+            return booking_request_error('That room is no longer available. Please pick another room.', 400)
+        if guest_count < 1:
+            return booking_request_error('Choose at least one guest.', 400)
+        if guest_count > int(room.guests):
+            return booking_request_error(f'{room.name} sleeps up to {room.guests} guest(s).', 400)
+        try:
+            quote = stay_option(room, data.get('check_in'), data.get('check_out'))
+        except ValueError as exc:
+            return booking_request_error(str(exc), 400)
+        if not quote['is_available']:
+            return booking_request_error('Those dates are no longer available.', 409)
+        if quote['total'] < 1:
+            return booking_request_error('This room is not priced for those dates yet.', 400)
+        try:
+            reserve_room_nights(room, quote['check_in'], quote['check_out'])
+        except ValueError as exc:
+            db.session.rollback()
+            return booking_request_error(str(exc), 409)
+        total_amount = quote['total']
+        stay = {
+            'property': property_listing,
+            'room': room,
+            'check_in': quote['check_in'],
+            'check_out': quote['check_out'],
+            'nights': quote['nights'],
+        }
+    else:
+        try:
+            guest_count = int(guests)
+            total_amount = calculate_booking_price(tour, guest_count)
+        except (TypeError, ValueError):
+            message = 'Please select a valid tour and guest count.'
+            if request.is_json:
+                return {'error': message}, 400
+            return redirect('/booking.html?error=Please%20select%20a%20valid%20tour%20and%20guest%20count')
+
+    tour_item = None if stay else db.session.get(Tour, tour)
     schedule = None
     if tour_item:
         schedule = TourSchedule.query.filter_by(
@@ -3008,23 +5656,48 @@ def booking_confirmation():
                 return {'error': str(exc)}, 409
             return redirect('/booking.html?error=' + urllib.parse.quote(str(exc)))
 
-    booking = {
-        'user_id': session.get('user_id'),
-        'schedule_id': schedule.id if schedule else None,
-        'name': data.get('name', 'Guest'),
-        'email': data.get('email', ''),
-        'phone': f'+{mpesa_phone}',
-        'tour': tour,
-        'date': schedule.starts_at.date().isoformat() if schedule else data.get('date', ''),
-        'time': schedule.starts_at.strftime('%H:%M') if schedule else data.get('time', ''),
-        'guests': guests,
-        'message': data.get('message', ''),
-        'amount': total_amount,
-        'commission_rate': float(get_admin_setting('commission_rate', 15)),
-        'traffic_source': session.get('analytics_source', 'Unattributed'),
-        'payment_status': 'pending',
-        'timestamp': datetime.utcnow().isoformat() + 'Z'
-    }
+    if stay:
+        booking = {
+            'user_id': session.get('user_id'),
+            'schedule_id': None,
+            'name': data.get('name', 'Guest'),
+            'email': data.get('email', ''),
+            'phone': f'+{mpesa_phone}',
+            'tour': stay['property'].slug,
+            'date': stay['check_in'],
+            'time': '',
+            'guests': guest_count,
+            'message': data.get('message', ''),
+            'amount': total_amount,
+            'commission_rate': float(get_admin_setting('commission_rate', 15)),
+            'traffic_source': session.get('analytics_source', 'Unattributed'),
+            'payment_status': 'pending',
+            'booking_type': 'property',
+            'property_id': stay['property'].id,
+            'room_id': stay['room'].id,
+            'check_in': stay['check_in'],
+            'check_out': stay['check_out'],
+            'nights': stay['nights'],
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+        }
+    else:
+        booking = {
+            'user_id': session.get('user_id'),
+            'schedule_id': schedule.id if schedule else None,
+            'name': data.get('name', 'Guest'),
+            'email': data.get('email', ''),
+            'phone': f'+{mpesa_phone}',
+            'tour': tour,
+            'date': schedule.starts_at.date().isoformat() if schedule else data.get('date', ''),
+            'time': schedule.starts_at.strftime('%H:%M') if schedule else data.get('time', ''),
+            'guests': guests,
+            'message': data.get('message', ''),
+            'amount': total_amount,
+            'commission_rate': float(get_admin_setting('commission_rate', 15)),
+            'traffic_source': session.get('analytics_source', 'Unattributed'),
+            'payment_status': 'pending',
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        }
     saved_booking = save_booking(booking)
     app.logger.info('Booking request saved: %s', saved_booking.to_dict())
 
@@ -3052,7 +5725,7 @@ def booking_confirmation():
             }))
         app.logger.error('Daraja rejected payment initiation for booking %s: %s', saved_booking.id, exc)
         try:
-            release_schedule(saved_booking.schedule_id, saved_booking.guests)
+            release_booking_availability(saved_booking)
             saved_booking.payment_status = 'failed'
             saved_booking.status = 'cancelled'
             db.session.commit()

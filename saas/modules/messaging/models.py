@@ -22,3 +22,28 @@ class Submission(db.Model):
             'timestamp': self.timestamp.isoformat() + 'Z' if self.timestamp else None,
             'email_sent': self.email_sent,
         }
+
+
+class NewsletterSubscriber(db.Model):
+    """Addresses collected by the newsletter signup forms.
+
+    One row per email address; unsubscribing keeps the row but flips
+    ``is_active`` so an address is never collected twice.
+    """
+
+    __tablename__ = 'newsletter_subscriber'
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(160), unique=True, nullable=False)
+    source = db.Column(db.String(40), nullable=False, default='website')
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'email': self.email,
+            'source': self.source,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
+        }

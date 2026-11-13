@@ -8,6 +8,12 @@ class Booking(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True, index=True)
     schedule_id = db.Column(db.Integer, db.ForeignKey('tour_schedule.id'), nullable=True, index=True)
+    booking_type = db.Column(db.String(20), nullable=False, default='tour')
+    property_id = db.Column(db.Integer, nullable=True, index=True)
+    room_id = db.Column(db.Integer, nullable=True, index=True)
+    check_in = db.Column(db.String(20), nullable=True)
+    check_out = db.Column(db.String(20), nullable=True)
+    nights = db.Column(db.Integer, nullable=True)
     name = db.Column(db.String(100), nullable=False)
     email = db.Column(db.String(120), nullable=False)
     phone = db.Column(db.String(50), nullable=False)
@@ -26,6 +32,10 @@ class Booking(db.Model):
     merchant_request_id = db.Column(db.String(100), nullable=True)
     mpesa_receipt_number = db.Column(db.String(30), nullable=True, unique=True)
     refund_status = db.Column(db.String(30), nullable=False, default='none')
+    refund_amount = db.Column(db.Float, nullable=False, default=0.0)
+    refund_reason = db.Column(db.String(255), nullable=False, default='')
+    refund_requested_at = db.Column(db.DateTime, nullable=True)
+    refund_paid_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(30), nullable=False, default='requested')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -40,6 +50,12 @@ class Booking(db.Model):
             'id': self.id,
             'user_id': self.user_id,
             'schedule_id': self.schedule_id,
+            'booking_type': self.booking_type or 'tour',
+            'property_id': self.property_id,
+            'room_id': self.room_id,
+            'check_in': self.check_in,
+            'check_out': self.check_out,
+            'nights': self.nights,
             'name': self.name,
             'email': self.email,
             'phone': self.phone,
@@ -54,6 +70,10 @@ class Booking(db.Model):
             'payment_confirmed_at': self.payment_confirmed_at.isoformat() + 'Z' if self.payment_confirmed_at else None,
             'mpesa_receipt_number': self.mpesa_receipt_number,
             'refund_status': self.refund_status,
+            'refund_amount': float(self.refund_amount or 0),
+            'refund_reason': self.refund_reason or '',
+            'refund_requested_at': self.refund_requested_at.isoformat() + 'Z' if self.refund_requested_at else None,
+            'refund_paid_at': self.refund_paid_at.isoformat() + 'Z' if self.refund_paid_at else None,
             'status': self.status,
             'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
         }

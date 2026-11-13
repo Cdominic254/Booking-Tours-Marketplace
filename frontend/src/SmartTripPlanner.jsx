@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { whatsappUrl } from './utils.js';
+import { documentLanguage, formatShillings as formatPrice, numberLocale, todayInKenya, whatsappUrl } from './utils.js';
 
 const HISTORY_KEY = 'kenya-trip-search-history';
 const AREA_TERMS = {
@@ -12,17 +12,6 @@ const ACTIVITY_TERMS = {
   heritage: ['old town', 'heritage', 'cultural', 'history', 'museum', 'swahili'],
   snorkeling: ['snorkel', 'reef', 'swim'],
 };
-
-function todayInKenya() {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Africa/Nairobi',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
 
 function readHistory() {
   try {
@@ -65,16 +54,8 @@ function distanceKm(first, second) {
   return 6371 * 2 * Math.atan2(Math.sqrt(arc), Math.sqrt(1 - arc));
 }
 
-function formatPrice(amount, language) {
-  return new Intl.NumberFormat(language === 'sw' ? 'sw-KE' : 'en-KE', {
-    style: 'currency',
-    currency: 'KES',
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
-
 function formatDate(date, language) {
-  return new Date(`${date}T12:00:00`).toLocaleDateString(language === 'sw' ? 'sw-KE' : 'en-KE', {
+  return new Date(`${date}T12:00:00`).toLocaleDateString(numberLocale(language), {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
@@ -108,7 +89,7 @@ function recommendationScore(tour, search) {
 
 export default function SmartTripPlanner({ tours, properties, destinations = [], whatsappPhone = '', guests: initialGuests = 1 }) {
   const today = useMemo(todayInKenya, []);
-  const [language, setLanguage] = useState(document.documentElement.lang === 'sw' ? 'sw' : 'en');
+  const [language, setLanguage] = useState(documentLanguage());
   const [filters, setFilters] = useState({
     startDate: today,
     endDate: '',
@@ -340,11 +321,11 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
             <label><span className="field-label">Area</span><select className="field" name="area" value={filters.area} onChange={updateFilter}><option value="any">Any area</option><option value="beach">Beach & coast</option><option value="heritage">Old Town & heritage</option></select></label>
             <label><span className="field-label">Activity</span><select className="field" name="activity" value={filters.activity} onChange={updateFilter}><option value="any">Any activity</option><option value="beach">Beach time</option><option value="boat">Boat trips</option><option value="heritage">Old Town tours</option><option value="snorkeling">Snorkeling</option></select></label>
             <label><span className="field-label">Feature or amenity</span><input className="field" name="feature" value={filters.feature} onChange={updateFilter} placeholder="For example: guide" /></label>
-            <label><span className="field-label">Max stay rate per night (KES)</span><input className="field" name="stayBudget" type="number" min="0" step="500" placeholder="Any rate" value={filters.stayBudget} onChange={updateFilter} /></label>
+            <label><span className="field-label">Max accommodation rate per night (KES)</span><input className="field" name="stayBudget" type="number" min="0" step="500" placeholder="Any rate" value={filters.stayBudget} onChange={updateFilter} /></label>
             <label><span className="field-label">Max distance from site (km)</span><input className="field" name="maxDistance" type="number" min="0" max="100" step="0.5" value={filters.maxDistance} onChange={updateFilter} /></label>
             <button className="min-h-12 rounded-full bg-[#b96e45] px-5 font-semibold text-white hover:bg-[#a45d38] sm:col-span-2 xl:col-span-4" type="submit">Find matching experiences</button>
           </form>
-          <p className="mt-3 text-xs text-[#52615b]">Distance uses coordinates saved for a stay and its beach or heritage landmark. Listings without coordinates are excluded from measured-distance results.</p>
+          <p className="mt-3 text-xs text-[#52615b]">Distance uses coordinates saved for an accommodation and its beach or heritage landmark. Listings without coordinates are excluded from measured-distance results.</p>
 
           {availabilityError && <p className="mt-5 rounded-lg bg-amber-50 p-3 text-sm text-amber-900" role="status">{availabilityError}</p>}
           <div className="mt-8">
@@ -371,13 +352,13 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
 
           {matchingProperties.length > 0 && (
             <div className="mt-10 border-t border-[#e9e5db] pt-8">
-              <h3 className="display-font text-2xl text-[#203b35]">Stay ideas</h3>
-              <p className="mt-1 text-sm text-[#52615b]">Guest capacity and rates match; the host confirms stay dates.</p>
+              <h3 className="display-font text-2xl text-[#203b35]">Accommodation ideas</h3>
+              <p className="mt-1 text-sm text-[#52615b]">Guest capacity and rates match; the host confirms your dates.</p>
               <div className="mt-2">
                 {matchingProperties.map((property) => (
                   <article className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e9e5db] py-4" key={property.slug}>
                     <div><h4 className="font-semibold text-[#203b35]">{property.name}</h4><p className="text-sm text-[#52615b]">{property.location} · {language === 'sw' ? `hadi ${property.guests} wageni · ${formatPrice(property.price_per_night, language)} / usiku` : `up to ${property.guests} guests · ${formatPrice(property.price_per_night, language)} / night`}</p></div>
-                    <a className="rounded-full border border-[#203b35] px-4 py-2 text-sm font-semibold text-[#203b35] hover:bg-[#203b35] hover:text-white" href={`/booking.html?stay=${encodeURIComponent(property.slug)}&guests=${encodeURIComponent(filters.guests)}&check_in=${filters.startDate}&check_out=${filters.endDate > filters.startDate ? filters.endDate : addDays(filters.startDate, 1)}#booking-checkout`}>Ask about this stay</a>
+                    <a className="rounded-full border border-[#203b35] px-4 py-2 text-sm font-semibold text-[#203b35] hover:bg-[#203b35] hover:text-white" href={`/booking.html?stay=${encodeURIComponent(property.slug)}&guests=${encodeURIComponent(filters.guests)}&check_in=${filters.startDate}&check_out=${filters.endDate > filters.startDate ? filters.endDate : addDays(filters.startDate, 1)}#booking-checkout`}>Ask about this accommodation</a>
                   </article>
                 ))}
               </div>
@@ -412,7 +393,7 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
               </div>
               <div className="border-t border-[#e9e5db] pt-4">
                 <p className="flex justify-between gap-3 text-sm text-[#52615b]"><span>Estimated activities total</span><strong className="text-[#203b35]">{formatPrice(itineraryTotal, language)}</strong></p>
-                <p className="mt-1 text-xs text-[#52615b]">Stay, transport, and final availability are not included.</p>
+                <p className="mt-1 text-xs text-[#52615b]">Accommodation, transport, and final availability are not included.</p>
                 <a className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={quoteUrl()} target="_blank" rel="noreferrer">{whatsappPhone ? 'Message Kenya Tours on WhatsApp' : 'Share quote on WhatsApp'}</a>
               </div>
             </>

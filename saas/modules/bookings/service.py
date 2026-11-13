@@ -72,6 +72,12 @@ def save_booking(booking):
     new_booking = Booking(
         user_id=booking.get('user_id'),
         schedule_id=booking.get('schedule_id'),
+        booking_type=booking.get('booking_type', 'tour'),
+        property_id=booking.get('property_id'),
+        room_id=booking.get('room_id'),
+        check_in=booking.get('check_in'),
+        check_out=booking.get('check_out'),
+        nights=booking.get('nights'),
         name=booking['name'],
         email=booking['email'],
         phone=booking['phone'],

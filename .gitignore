@@ -15,6 +15,7 @@ instance/
 uploads/
 .DS_Store
 .pytest_cache/
+pytest-of-*/
 .coverage
 .coverage.*
 htmlcov/
