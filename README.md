@@ -113,3 +113,9 @@ Two guards keep local, remote, and deployed state aligned. The `deploy-vercel` j
 - Daraja callback URLs must be public HTTPS URLs; payment success is confirmed through Daraja verification, not a browser redirect.
 - Uploads require an authenticated admin or partner session, CSRF protection, safe filenames, and validated image signatures.
 - Do not expose the development SQLite database, `.env`, or upload directory publicly.
+
+## License
+
+Released under the MIT License; see [LICENSE](LICENSE). The application code, tests, and
+documentation are covered by it. The photography bundled in `images/` and `pictures/` depicts real
+Kenyan destinations and operators and is not relicensed here.
