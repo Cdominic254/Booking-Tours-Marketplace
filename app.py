@@ -27,6 +27,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from sqlalchemy import case, or_, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -242,6 +243,13 @@ limiter = Limiter(
     headers_enabled=True,
 )
 
+# Vercel terminates TLS at its edge and forwards the visitor address in
+# X-Forwarded-For. Without ProxyFix every request would look like it came from
+# the proxy, so IP rate limits would be shared by all visitors and generated
+# URLs would use the internal host. Other reverse proxies opt in explicitly.
+if IS_VERCEL or os.environ.get('TRUST_PROXY_HEADERS', '').lower() in ('1', 'true', 'yes'):
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
 
 @app.after_request
 def add_security_headers(response):
@@ -251,6 +259,23 @@ def add_security_headers(response):
     response.headers.setdefault('Permissions-Policy', 'camera=(), geolocation=(), microphone=()')
     if app.config['SESSION_COOKIE_SECURE']:
         response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')
+    return response
+
+
+@app.after_request
+def cache_static_assets(response):
+    """Let the Vercel edge cache hashed bundles and bundled photography."""
+    if request.method != 'GET' or response.status_code != 200:
+        return response
+    path = request.path
+    if path.startswith('/assets/'):
+        cache_control = 'public, max-age=31536000, immutable'
+    elif path.startswith(('/images/', '/pictures/')) or path == '/logo.svg':
+        cache_control = 'public, max-age=86400'
+    else:
+        return response
+    response.headers['Cache-Control'] = cache_control
+    response.headers['Vercel-CDN-Cache-Control'] = cache_control
     return response
 
 

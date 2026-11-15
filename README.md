@@ -79,7 +79,7 @@ The test suite covers authentication rate limits, CSRF protection, access contro
 
 ## Vercel Deployment
 
-Connect this GitHub repository to Vercel with the repository root as the project root. `vercel.json` builds the Vite frontend and bundles `frontend/dist`, `images`, `pictures`, `saas`, and `logo.svg` with the Flask function in `app.py`.
+Connect this GitHub repository to Vercel with the repository root as the project root. `vercel.json` builds the Vite frontend, sets a 60-second function timeout, and bundles `frontend/dist`, `images`, `pictures`, `saas`, and `logo.svg` with the Flask function in `app.py` while excluding tests, docs, local databases, and `frontend/node_modules`/`frontend/src` from the bundle. Python 3.12 is pinned by `.python-version`.
 
 Configure these production and preview environment variables in the Vercel project settings:
 
@@ -93,11 +93,13 @@ Configure these production and preview environment variables in the Vercel proje
 
 Vercel's function filesystem is ephemeral. Do not configure SQLite or `UPLOAD_DIR`; without `DATABASE_URL` the function boots on ephemeral SQLite under `/tmp` and every cold start loses bookings and accounts, and image upload endpoints intentionally return 503 on Vercel until persistent object storage is integrated. Bundled `images/` and `pictures/` assets continue to serve normally. Verify `/healthz`, `/readyz`, page navigation, booking, and Daraja callbacks after deployment.
 
+On Vercel the app trusts the edge's `X-Forwarded-*` headers, so rate limits key on the visitor IP instead of the proxy address; set `TRUST_PROXY_HEADERS=true` to opt in behind another reverse proxy. Hashed bundles under `/assets/` are served with a one-year immutable cache and bundled photography for one day, both of which the Vercel CDN honours, so repeat visits do not invoke the function for static files. Before the first deploy, run `python -m pytest` and `npm --prefix frontend run build`, then confirm `DATABASE_URL`, `SECRET_KEY`, `RATELIMIT_STORAGE_URI`, and `DARAJA_CALLBACK_URL` point at the production hostname.
+
 ### CI/CD
 
 GitHub Actions runs the backend tests and frontend build before the gated Vercel deployment job. To enable deployments, add repository secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`, then set the repository variable `VERCEL_DEPLOY_ENABLED=true`.
 
-Push to `main` for production. Same-repository pull requests create preview deployments; fork pull requests run CI only.
+Push to `main` or the `Booking-Tours-Marketplace` branch for production. Same-repository pull requests create preview deployments; fork pull requests run CI only.
 
 ## Security Notes
 

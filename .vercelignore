@@ -14,3 +14,7 @@ uploads
 tests
 .pytest_cache
 instance
+pytest-of-*
+docs
+*.code-workspace
+.github

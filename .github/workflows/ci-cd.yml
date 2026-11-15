@@ -66,10 +66,12 @@ jobs:
       - frontend-build
     if: >-
       vars.VERCEL_DEPLOY_ENABLED == 'true' &&
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/Booking-Tours-Marketplace') ||
        github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository ||
-       github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+       github.event_name == 'workflow_dispatch' &&
+       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/Booking-Tours-Marketplace'))
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
