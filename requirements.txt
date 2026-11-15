@@ -3,6 +3,10 @@ Flask==3.1.3
 Flask-Limiter==4.1.1
 Flask-SQLAlchemy==3.1.1
 gunicorn==26.2.0
+# SQLAlchemy 2.1 resolves a postgresql:// URL to psycopg (v3) rather than
+# psycopg2, so install both drivers to keep the plain URL scheme working
+# whichever 2.x line the resolver picks.
+psycopg[binary]>=3.2,<4
 psycopg2-binary==2.9.13
 redis>=5.0,<8
 python-dotenv==1.2.4

@@ -26,7 +26,7 @@ from flask import Flask, redirect, request, send_file, send_from_directory, sess
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from sqlalchemy import case, or_, text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, ProgrammingError, SQLAlchemyError
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -1337,6 +1337,24 @@ def safe_image_url(value):
 
 _database_initialized = False
 _database_initialization_lock = threading.Lock()
+# A pooled Postgres endpoint (Neon and friends run PgBouncer in transaction mode)
+# cannot hold a session-level advisory lock reliably, so concurrent instances are
+# handled by retrying: the loser of a CREATE TABLE race simply runs again once
+# the winner's tables exist.
+_DATABASE_INIT_ATTEMPTS = 3
+
+
+def _run_database_migrations():
+    db.create_all()
+    ensure_booking_payment_columns()
+    ensure_identity_columns()
+    ensure_operator_columns()
+    ensure_catalog_columns()
+    ensure_review_columns()
+    ensure_refund_columns()
+    ensure_admin_settings()
+    seed_catalogue()
+    bootstrap_admin_account()
 
 
 def initialize_database():
@@ -1347,16 +1365,18 @@ def initialize_database():
     with _database_initialization_lock:
         if _database_initialized:
             return
-        db.create_all()
-        ensure_booking_payment_columns()
-        ensure_identity_columns()
-        ensure_operator_columns()
-        ensure_catalog_columns()
-        ensure_review_columns()
-        ensure_refund_columns()
-        ensure_admin_settings()
-        seed_catalogue()
-        bootstrap_admin_account()
+        for attempt in range(_DATABASE_INIT_ATTEMPTS):
+            try:
+                _run_database_migrations()
+                break
+            except (IntegrityError, ProgrammingError):
+                # Another instance created the same table between our existence
+                # check and the CREATE, which Postgres reports as a duplicate
+                # relation. The retry sees the finished schema and proceeds.
+                db.session.rollback()
+                if attempt == _DATABASE_INIT_ATTEMPTS - 1:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
         _database_initialized = True
 
 
