@@ -88,6 +88,28 @@ def test_app_boots_on_vercel_without_secret_key_or_database_url():
     assert 'WARNING: rate limiting falls back' in result.stderr
 
 
+def test_deploy_paths_refuse_work_that_is_not_in_git():
+    workflow = (PROJECT_ROOT / '.github/workflows/ci-cd.yml').read_text()
+
+    # Deploying from a dirty checkout once left production running code that no
+    # commit held, so the deploy job proves its tree is clean before building.
+    assert 'Verify the checkout matches the triggering commit' in workflow
+    assert 'git status --porcelain' in workflow
+    assert 'GITHUB_SHA' in workflow
+
+    # Nothing stops a manual deploy or an old dashboard redeploy from pointing
+    # production at an unmerged commit, so a job checks what is actually live.
+    assert 'production-drift' in workflow
+    assert 'githubCommitSha' in workflow
+    assert 'EXPECTED_SHA' in workflow
+
+    # A GitHub runner always starts clean, so the dirty-tree case that caused the
+    # drift can only be caught on the machine: the deploy script guards it there.
+    script = (PROJECT_ROOT / 'scripts/deploy.sh').read_text()
+    assert 'git status --porcelain' in script
+    assert 'origin/$PRODUCTION_BRANCH' in script
+
+
 def test_app_trusts_the_vercel_proxy_headers():
     env = {
         **os.environ,

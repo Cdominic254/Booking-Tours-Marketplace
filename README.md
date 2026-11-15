@@ -101,6 +101,8 @@ GitHub Actions runs the backend tests and frontend build on every push. Deployme
 
 Push to `main` or the `Booking-Tours-Marketplace` branch for production. Same-repository pull requests create preview deployments; fork pull requests run CI only.
 
+Two guards keep local, remote, and deployed state aligned. The `deploy-vercel` job fails when its checkout has uncommitted changes or does not match the triggering commit, and the `production-drift` job compares the newest production deployment against the pushed commit, failing when production is running a commit that git does not hold. Both exist because deploying from a dirty working tree once left production on code that no commit contained, and the next push silently reverted it. Deploy by hand with `scripts/deploy.sh`, which exits unless the tree is clean and `HEAD` matches `origin`; that is the case CI can never check, because a GitHub runner always starts with a clean tree.
+
 ## Security Notes
 
 - Set a long, random `SECRET_KEY` in every deployed environment.

@@ -77,6 +77,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Verify the checkout matches the triggering commit
+        run: |
+          # A manual `vercel deploy --prod` from a dirty working tree once put
+          # code into production that no commit contained, so the next push
+          # silently reverted it. This job builds from git alone; prove that
+          # before building anything.
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::The working tree has uncommitted changes."
+            git status --porcelain
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "::error::Checked out $(git rev-parse HEAD) but the run is for $GITHUB_SHA."
+            exit 1
+          fi
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -105,3 +121,54 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+  production-drift:
+    name: Production commit matches git
+    needs:
+      - backend-tests
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/Booking-Tours-Marketplace')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when production is not running the pushed commit
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          # Vercel's Git integration builds every push, but a deploy from a dirty
+          # tree or an old dashboard redeploy can leave production on a commit
+          # that exists nowhere in git. Poll the newest production deployment
+          # until it reports this commit, so drift fails instead of passing by.
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::notice::Vercel credentials are not configured; skipping the drift check."
+            exit 0
+          fi
+
+          query="projectId=$VERCEL_PROJECT_ID&target=production&limit=1"
+          case "${VERCEL_ORG_ID:-}" in
+            team_*) query="$query&teamId=$VERCEL_ORG_ID" ;;
+          esac
+
+          deadline=$((SECONDS + 600))
+          while :; do
+            payload=$(curl -sS -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v6/deployments?$query" || true)
+            deployed=$(printf '%s' "$payload" \
+              | jq -r '.deployments[0].meta.githubCommitSha // "-"' 2>/dev/null || echo '-')
+            state=$(printf '%s' "$payload" \
+              | jq -r '.deployments[0].state // "-"' 2>/dev/null || echo '-')
+
+            if [ "$deployed" = "$EXPECTED_SHA" ]; then
+              echo "Production is running $EXPECTED_SHA ($state)."
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::Production is on '$deployed' ($state) but git holds $EXPECTED_SHA."
+              echo "Deploying from uncommitted work or redeploying an old build causes this."
+              exit 1
+            fi
+            sleep 15
+          done

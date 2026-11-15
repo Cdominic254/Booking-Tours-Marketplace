@@ -12,6 +12,7 @@ __pycache__
 frontend/node_modules
 uploads
 tests
+scripts
 .pytest_cache
 instance
 pytest-of-*
