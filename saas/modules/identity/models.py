@@ -1,6 +1,10 @@
+import secrets
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from saas.extensions import db
+
+_NAIROBI = ZoneInfo('Africa/Nairobi')
 
 
 class User(db.Model):
@@ -57,6 +61,9 @@ VENDOR_BUSINESS_TYPES = {
     'services': 'Other travel services',
 }
 
+# Business types whose owners can take the discounted monthly subscription.
+TOUR_OPERATOR_BUSINESS_TYPES = {'safari', 'tours'}
+
 
 class VendorAccount(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -71,11 +78,43 @@ class VendorAccount(db.Model):
     website = db.Column(db.String(255), nullable=False, default='')
     logo_url = db.Column(db.String(500), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    # Monthly subscription: tour and safari operators who keep it paid pay a
+    # lower host commission on every booking taken while it is active.
+    subscription_status = db.Column(db.String(20), nullable=False, default='inactive')
+    subscription_plan = db.Column(db.String(40), nullable=False, default='')
+    subscription_started_at = db.Column(db.DateTime, nullable=True)
+    subscription_renews_at = db.Column(db.DateTime, nullable=True)
+    subscription_monthly_fee = db.Column(db.Float, nullable=False, default=0.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def business_type_list(self):
         values = {item.strip() for item in (self.business_types or '').split(',') if item.strip()}
         return [key for key in VENDOR_BUSINESS_TYPES if key in values]
+
+    def is_tour_operator(self):
+        """True when the account lists tours or safaris, so it can subscribe."""
+        return any(
+            key in TOUR_OPERATOR_BUSINESS_TYPES for key in self.business_type_list()
+        )
+
+    def subscription_is_active(self, today=None):
+        """A prepaid month stays live until its renewal date in Kenya time."""
+        if (self.subscription_status or '') != 'active' or not self.subscription_renews_at:
+            return False
+        today = today or datetime.now(_NAIROBI).date()
+        return self.subscription_renews_at.date() >= today
+
+    def subscription_dict(self):
+        active = self.subscription_is_active()
+        return {
+            'status': 'active' if active else 'inactive',
+            'plan': self.subscription_plan or '',
+            'is_active': active,
+            'is_tour_operator': self.is_tour_operator(),
+            'started_at': self.subscription_started_at.isoformat() + 'Z' if self.subscription_started_at else None,
+            'renews_at': self.subscription_renews_at.isoformat() + 'Z' if self.subscription_renews_at else None,
+            'monthly_fee': float(self.subscription_monthly_fee or 0),
+        }
 
     def to_dict(self):
         return {
@@ -91,6 +130,7 @@ class VendorAccount(db.Model):
             'website': self.website or '',
             'logo_url': self.logo_url,
             'is_active': self.is_active,
+            'subscription': self.subscription_dict(),
         }
 
     def public_dict(self):
@@ -106,4 +146,41 @@ class VendorAccount(db.Model):
             'phone': self.phone or '',
             'website': self.website or '',
             'logo_url': self.logo_url,
+        }
+
+
+class VendorSubscriptionPayment(db.Model):
+    """One month of a partner subscription paid through M-Pesa STK Push."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey('vendor_account.id'), nullable=False, index=True)
+    amount = db.Column(db.Float, nullable=False, default=0.0)
+    phone = db.Column(db.String(20), nullable=False, default='')
+    status = db.Column(db.String(20), nullable=False, default='pending')
+    reference = db.Column(db.String(64), nullable=False, default=lambda: secrets.token_urlsafe(24))
+    checkout_request_id = db.Column(db.String(100), nullable=True)
+    merchant_request_id = db.Column(db.String(100), nullable=True)
+    mpesa_receipt_number = db.Column(db.String(30), nullable=True)
+    period_start = db.Column(db.DateTime, nullable=True)
+    period_end = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    paid_at = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.Index('uq_subscription_payment_reference', 'reference', unique=True),
+        db.Index('uq_subscription_checkout_request_id', 'checkout_request_id', unique=True),
+        db.Index('uq_subscription_mpesa_receipt_number', 'mpesa_receipt_number', unique=True),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'amount': float(self.amount or 0),
+            'status': self.status,
+            'reference': self.reference,
+            'mpesa_receipt_number': self.mpesa_receipt_number,
+            'period_start': self.period_start.isoformat() + 'Z' if self.period_start else None,
+            'period_end': self.period_end.isoformat() + 'Z' if self.period_end else None,
+            'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
+            'paid_at': self.paid_at.isoformat() + 'Z' if self.paid_at else None,
         }

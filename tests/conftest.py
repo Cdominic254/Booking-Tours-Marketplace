@@ -4,7 +4,7 @@ import tempfile
 import pytest
 
 
-_test_database_fd, _test_database_path = tempfile.mkstemp(prefix='kenya-tours-tests-', suffix='.db')
+_test_database_fd, _test_database_path = tempfile.mkstemp(prefix='kenyabook-tests-', suffix='.db')
 os.close(_test_database_fd)
 os.unlink(_test_database_path)
 os.environ['DATABASE_URL'] = f'sqlite:///{_test_database_path}'

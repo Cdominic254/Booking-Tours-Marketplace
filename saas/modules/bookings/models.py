@@ -23,6 +23,17 @@ class Booking(db.Model):
     guests = db.Column(db.Integer, nullable=False)
     message = db.Column(db.Text, nullable=True)
     amount = db.Column(db.Float, nullable=False, default=0.0)
+    # Split fee model: the guest pays the subtotal plus a service fee and a flat
+    # booking fee, and the host receives the subtotal minus a commission. Rates
+    # are snapshotted so a later policy change never rewrites a confirmed booking.
+    subtotal_amount = db.Column(db.Float, nullable=False, default=0.0)
+    service_fee_amount = db.Column(db.Float, nullable=False, default=0.0)
+    booking_fee_amount = db.Column(db.Float, nullable=False, default=0.0)
+    host_commission_amount = db.Column(db.Float, nullable=False, default=0.0)
+    host_payout_amount = db.Column(db.Float, nullable=False, default=0.0)
+    host_commission_rate = db.Column(db.Float, nullable=False, default=4.0)
+    guest_service_fee_rate = db.Column(db.Float, nullable=False, default=9.0)
+    # Legacy admin commission snapshot, kept so older databases still load.
     commission_rate = db.Column(db.Float, nullable=False, default=15.0)
     traffic_source = db.Column(db.String(120), nullable=False, default='unattributed')
     payment_status = db.Column(db.String(30), nullable=False, default='pending')
@@ -65,6 +76,13 @@ class Booking(db.Model):
             'guests': self.guests,
             'message': self.message,
             'amount': self.amount,
+            'subtotal_amount': float(self.subtotal_amount or 0),
+            'service_fee_amount': float(self.service_fee_amount or 0),
+            'booking_fee_amount': float(self.booking_fee_amount or 0),
+            'host_commission_amount': float(self.host_commission_amount or 0),
+            'host_payout_amount': float(self.host_payout_amount or 0),
+            'host_commission_rate': float(self.host_commission_rate or 0),
+            'guest_service_fee_rate': float(self.guest_service_fee_rate or 0),
             'commission_rate': self.commission_rate,
             'payment_status': self.payment_status,
             'payment_confirmed_at': self.payment_confirmed_at.isoformat() + 'Z' if self.payment_confirmed_at else None,

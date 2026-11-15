@@ -91,9 +91,19 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
     customer_email = f'customer-{uuid.uuid4().hex}@example.test'
     with application.app.app_context():
         vendor_email = application.db.session.get(application.VendorAccount, vendor_id).email
-        original_commission_rate = float(application.get_admin_setting('commission_rate', 15))
-    if original_commission_rate != 15:
-        assert admin.put('/api/admin/settings', json={'commission_rate': 15}, headers=headers).status_code == 200
+        original_host_rate = float(application.get_admin_setting('host_commission_rate', 4))
+        original_subscriber_rate = float(application.get_admin_setting('subscriber_host_commission_rate', 2.5))
+        original_guest_rate = float(application.get_admin_setting('guest_service_fee_rate', 9))
+        original_booking_fee = float(application.get_admin_setting('booking_fee', 100))
+        original_subscription_fee = float(application.get_admin_setting('subscription_monthly_fee', 2500))
+    if (original_host_rate, original_subscriber_rate, original_guest_rate, original_booking_fee, original_subscription_fee) != (4.0, 2.5, 9.0, 100.0, 2500.0):
+        assert admin.put('/api/admin/settings', json={
+            'host_commission_rate': 4,
+            'subscriber_host_commission_rate': 2.5,
+            'guest_service_fee_rate': 9,
+            'booking_fee': 100,
+            'subscription_monthly_fee': 2500,
+        }, headers=headers).status_code == 200
     with application.app.app_context():
         customer = application.User(
             name='Operations Customer',
@@ -118,6 +128,7 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
         )
         application.db.session.add(departure)
         application.db.session.flush()
+        fee_quote = application.split_fee_quote(5000)
         booking = application.Booking(
             user_id=customer.id,
             schedule_id=departure.id,
@@ -128,8 +139,15 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
             date=departure.starts_at.date().isoformat(),
             time=departure.starts_at.strftime('%H:%M'),
             guests=2,
-            amount=5000,
-            commission_rate=15,
+            amount=fee_quote['total'],
+            subtotal_amount=fee_quote['subtotal'],
+            service_fee_amount=fee_quote['guest_service_fee'],
+            booking_fee_amount=fee_quote['booking_fee'],
+            host_commission_amount=fee_quote['host_commission'],
+            host_payout_amount=fee_quote['host_payout'],
+            host_commission_rate=fee_quote['host_commission_rate'],
+            guest_service_fee_rate=fee_quote['guest_service_fee_rate'],
+            commission_rate=fee_quote['host_commission_rate'],
             payment_status='paid',
             status='confirmed',
         )
@@ -144,28 +162,64 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
     assert response.status_code == 200
     operations = response.get_json()
     assert operations['settings'] == {
-        'commission_rate': 15,
+        'host_commission_rate': 4.0,
+        'subscriber_host_commission_rate': 2.5,
+        'guest_service_fee_rate': 9.0,
+        'booking_fee': 100.0,
+        'subscription_monthly_fee': 2500.0,
         'refund_policy': 'automatic',
         'cancellation_window_hours': 48,
     }
     assert operations['refunds_due'] == {'count': 0, 'amount': 0}
-    assert operations['analytics']['paid_revenue'] == 5000
+    assert operations['analytics']['paid_revenue'] == 5550
     assert operations['analytics']['commission_earned'] == 750
+    assert operations['analytics']['host_payout_due'] == 4800
     assert operations['analytics']['by_tour'][0]['tour_name'] == 'Operations Sailing'
+    assert operations['analytics']['by_tour'][0]['host_payout'] == 4800
     assert next(row for row in operations['customers'] if row['id'] == customer_id)['booking_count'] == 1
 
-    assert admin.put('/api/admin/settings', json={'commission_rate': 21}, headers=headers).status_code == 400
-    response = admin.put('/api/admin/settings', json={'commission_rate': 17.5}, headers=headers)
+    assert admin.put('/api/admin/settings', json={
+        'host_commission_rate': 26,
+        'subscriber_host_commission_rate': 2.5,
+        'guest_service_fee_rate': 9,
+        'booking_fee': 100,
+        'subscription_monthly_fee': 2500,
+    }, headers=headers).status_code == 400
+    assert admin.put('/api/admin/settings', json={
+        'host_commission_rate': 4,
+        'subscriber_host_commission_rate': 2.5,
+        'guest_service_fee_rate': 9,
+        'booking_fee': -50,
+        'subscription_monthly_fee': 2500,
+    }, headers=headers).status_code == 400
+    assert admin.put('/api/admin/settings', json={
+        'host_commission_rate': 4,
+        'subscriber_host_commission_rate': 2.5,
+        'guest_service_fee_rate': 9,
+        'booking_fee': 100,
+        'subscription_monthly_fee': -1,
+    }, headers=headers).status_code == 400
+    response = admin.put('/api/admin/settings', json={
+        'host_commission_rate': 5,
+        'subscriber_host_commission_rate': 3,
+        'guest_service_fee_rate': 10,
+        'booking_fee': 150,
+        'subscription_monthly_fee': 3000,
+    }, headers=headers)
     assert response.status_code == 200
-    assert response.get_json()['settings']['commission_rate'] == 17.5
+    assert response.get_json()['settings']['host_commission_rate'] == 5
+    assert response.get_json()['settings']['subscriber_host_commission_rate'] == 3
+    assert response.get_json()['settings']['guest_service_fee_rate'] == 10
+    assert response.get_json()['settings']['booking_fee'] == 150
+    assert response.get_json()['settings']['subscription_monthly_fee'] == 3000
     assert admin.put(
         '/api/admin/settings',
-        json={'commission_rate': 17.5, 'refund_policy': 'automatic'},
+        json={'host_commission_rate': 5, 'subscriber_host_commission_rate': 3, 'guest_service_fee_rate': 10, 'booking_fee': 150, 'subscription_monthly_fee': 3000, 'refund_policy': 'automatic'},
         headers=headers,
     ).status_code == 200
     assert admin.put(
         '/api/admin/settings',
-        json={'commission_rate': 17.5, 'refund_policy': 'manual_review'},
+        json={'host_commission_rate': 5, 'subscriber_host_commission_rate': 3, 'guest_service_fee_rate': 10, 'booking_fee': 150, 'subscription_monthly_fee': 3000, 'refund_policy': 'manual_review'},
         headers=headers,
     ).status_code == 400
 
@@ -210,8 +264,8 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
     )
     assert response.status_code == 200
     assert response.get_json()['booking']['refund_status'] == 'pending'
-    assert response.get_json()['booking']['refund_amount'] == 5000
-    assert admin.get('/api/admin/operations').get_json()['refunds_due'] == {'count': 1, 'amount': 5000}
+    assert response.get_json()['booking']['refund_amount'] == 5550
+    assert admin.get('/api/admin/operations').get_json()['refunds_due'] == {'count': 1, 'amount': 5550}
     assert admin.post(
         f'/api/admin/bookings/{booking_id}/refund',
         json={'status': 'approved'},
@@ -255,7 +309,7 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
     assert admin.post(f'/api/admin/bookings/{booking_id}/cancel', headers=headers).status_code == 200
     with application.app.app_context():
         assert application.db.session.get(application.TourSchedule, departure_id).booked_count == 0
-        assert application.db.session.get(application.Booking, booking_id).commission_rate == 15
+        assert application.db.session.get(application.Booking, booking_id).commission_rate == 4
         application.BookingDispute.query.filter_by(booking_id=booking_id).delete()
         application.db.session.delete(application.db.session.get(application.Booking, booking_id))
         application.db.session.delete(application.db.session.get(application.TourSchedule, departure_id))
@@ -263,7 +317,7 @@ def test_admin_operations_manage_accounts_bookings_refunds_disputes_and_analytic
         application.db.session.commit()
     assert admin.put(
         '/api/admin/settings',
-        json={'commission_rate': original_commission_rate},
+        json={'host_commission_rate': original_host_rate, 'subscriber_host_commission_rate': original_subscriber_rate, 'guest_service_fee_rate': original_guest_rate, 'booking_fee': original_booking_fee, 'subscription_monthly_fee': original_subscription_fee},
         headers=headers,
     ).status_code == 200
 
@@ -273,7 +327,7 @@ def test_admin_analytics_tracks_funnel_sources_occupancy_and_property_revenue(ad
     visitor = application.app.test_client()
     first_event = visitor.post('/api/analytics/events', json={
         'page': '/',
-        'source': 'https://www.instagram.com/lamutours/',
+        'source': 'https://www.instagram.com/safarinasstay/',
     })
     assert first_event.status_code == 204
     assert application.normalize_analytics_source('instagram') == 'Instagram'

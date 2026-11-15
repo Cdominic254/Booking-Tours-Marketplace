@@ -44,7 +44,7 @@ def test_stk_push_builds_sandbox_request(daraja_environment, monkeypatch):
     assert request['payload']['Amount'] == 1500
     assert request['payload']['PhoneNumber'] == '254712345678'
     assert request['payload']['PartyA'] == '254712345678'
-    assert request['payload']['AccountReference'] == 'KT-123'
+    assert request['payload']['AccountReference'] == 'KB-123'
     assert request['payload']['CallBackURL'] == daraja_environment['DARAJA_CALLBACK_URL']
     assert request['headers']['Authorization'] == 'Bearer sandbox-token'
     assert result == {

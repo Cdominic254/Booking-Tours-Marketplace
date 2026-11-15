@@ -56,7 +56,7 @@ def customer_trip(monkeypatch):
             itinerary='Meet your guide\nSail along the coast',
             inclusions='Local guide',
             exclusions='Meals',
-            pickup_point='Kenya Tours meeting point',
+            pickup_point='kenyaBook meeting point',
             min_group_size=1,
             max_group_size=6,
         )
@@ -143,7 +143,14 @@ def test_customer_can_book_view_reschedule_and_cancel_while_capacity_is_reserved
     with application.app.app_context():
         assert application.db.session.get(application.TourSchedule, first_slot).booked_count == 2
         saved_booking = application.db.session.get(application.Booking, booking_id)
-        assert saved_booking.commission_rate == float(application.get_admin_setting('commission_rate', 15))
+        assert saved_booking.commission_rate == float(application.get_admin_setting('host_commission_rate', 4))
+        # The guest pays the published subtotal plus the 9% service fee and the
+        # flat booking fee.
+        assert saved_booking.subtotal_amount == 3000
+        assert saved_booking.service_fee_amount == 270
+        assert saved_booking.booking_fee_amount == 100
+        assert saved_booking.amount == 3370
+        assert saved_booking.host_payout_amount == 2880
 
     response = client.get('/api/customer/bookings')
     assert response.status_code == 200
@@ -290,7 +297,7 @@ def test_m_pesa_callback_marks_paid_only_after_daraja_query_verification(custome
     with application.app.app_context():
         booking = application.db.session.get(application.Booking, booking_data['id'])
         callback = _daraja_callback(booking, 0, {
-            'Amount': 1500,
+            'Amount': int(round(booking.amount)),
             'MpesaReceiptNumber': 'TST123ABC',
             'TransactionDate': 20260516123456,
             'PhoneNumber': 254712345678,
@@ -349,8 +356,8 @@ def test_m_pesa_callback_marks_paid_only_after_daraja_query_verification(custome
         assert document.data.startswith(b'%PDF-')
     attachments = list(sent_messages[0].iter_attachments())
     assert {attachment.get_filename() for attachment in attachments} == {
-        f"Kenya-Tours-Invoice-{booking_data['id']}.pdf",
-        f"Kenya-Tours-Receipt-{booking_data['id']}.pdf",
+        f"kenyaBook-Invoice-{booking_data['id']}.pdf",
+        f"kenyaBook-Receipt-{booking_data['id']}.pdf",
     }
 
 

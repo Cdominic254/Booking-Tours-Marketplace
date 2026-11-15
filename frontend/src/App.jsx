@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { addDaysToIsoDate, documentLanguage, formatMoney as formatPrice, formatShillings as formatKenyanShillings, getErrorMessage, numberLocale, todayInKenya, whatsappUrl } from './utils.js';
 import SmartTripPlanner from './SmartTripPlanner.jsx';
+import LiveChat from './LiveChat.jsx';
 import { BLOG_POSTS, blogCategories, findBlogPost } from './blog.js';
 import { SUPPORT_PAGES, findSupportPage } from './support.js';
 import { CATEGORIES, categoriesFor, categoryItems, findCategory } from './categories.js';
@@ -44,7 +45,7 @@ const legacyTourSlugs = ['dhow', 'old-town', 'sandbank', 'fishing', 'cultural', 
 const fallbackImage = '/images/Spiritedpursuit_leelitumbe-106_lamu_kenya.webp';
 const emptyCatalogue = { tours: [], properties: [], services: [], operators: [], destinations: [] };
 const WHATSAPP_GREETING = "Hello, I'm planning a trip to Kenya and would like some information.";
-const CONTACT_PHONE_DISPLAY = '0704143718';
+const CONTACT_PHONE_DISPLAY = '+254 704 143 718';
 const CONTACT_PHONE_HREF = 'tel:+254704143718';
 
 function useWhatsAppPhone() {
@@ -155,16 +156,27 @@ function CompareToggle({ type, slug, name, className = '' }) {
 function CompareTray() {
   const items = useCompareSelection();
   const meta = useCompareMeta();
-  if (!items.length || window.location.pathname === '/compare.html') return null;
+  const [dismissed, setDismissed] = useState(false);
+  if (!items.length || dismissed || window.location.pathname === '/compare.html') return null;
 
   return (
-    <div className="fixed bottom-3 left-3 right-24 z-40 sm:bottom-5 sm:left-5 sm:right-auto sm:w-[24rem]">
-      <div className="rounded-2xl border border-[#d9d3c4] bg-white/95 p-3 shadow-2xl shadow-slate-950/20 backdrop-blur">
-        <div className="flex items-center justify-between gap-3">
+    <div className="compare-tray fixed left-3 right-20 z-40 sm:left-5 sm:right-auto sm:w-[24rem]">
+      <div className="rounded-2xl border border-[#d9d3c4] bg-white/95 p-2.5 shadow-2xl shadow-slate-950/20 backdrop-blur sm:p-3">
+        <div className="flex items-center justify-between gap-2">
           <p className="text-[0.65rem] font-bold uppercase tracking-[0.14em] text-[#a75f3a]">Comparing {items.length} of {COMPARE_LIMIT}</p>
-          <button className="text-xs font-semibold text-[#52615b] hover:text-[#203b35]" onClick={clearCompare} type="button">Clear all</button>
+          <div className="flex items-center gap-1">
+            <button className="rounded-full px-2 py-1.5 text-xs font-semibold text-[#52615b] hover:text-[#203b35]" onClick={clearCompare} type="button">Clear</button>
+            <button
+              aria-label="Hide the comparison tray"
+              className="grid h-8 w-8 place-items-center rounded-full text-base leading-none text-[#52615b] hover:bg-[#eef3f3] hover:text-[#203b35]"
+              onClick={() => setDismissed(true)}
+              type="button"
+            >
+              ×
+            </button>
+          </div>
         </div>
-        <ul className="mt-2 flex items-start gap-2">
+        <ul className="mt-2 hidden items-start gap-2 sm:flex">
           {items.map((item) => {
             const listing = meta[compareKey(item)];
             return (
@@ -187,7 +199,7 @@ function CompareTray() {
             );
           })}
         </ul>
-        <a className="mt-3 flex items-center justify-center rounded-full bg-[#203b35] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#31554b]" href={compareHref(items)}>
+        <a className="mt-2 flex items-center justify-center rounded-full bg-[#203b35] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#31554b] sm:mt-3 sm:py-2" href={compareHref(items)}>
           Compare side by side →
         </a>
       </div>
@@ -385,7 +397,7 @@ function ShareRow({ title, className = '', tone = 'light' }) {
       <span className={`text-xs font-bold uppercase tracking-[0.14em] ${tone === 'dark' ? 'text-white/55' : 'text-[#8a8172]'}`}>Share</span>
       {items.map((item) => (
         <a
-          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${chip}`}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-2 text-xs font-semibold transition ${chip}`}
           href={item.href}
           key={item.label}
           rel="noopener noreferrer"
@@ -401,7 +413,7 @@ function ShareRow({ title, className = '', tone = 'light' }) {
         </a>
       ))}
       <button
-        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${chip}`}
+        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-2 text-xs font-semibold transition ${chip}`}
         onClick={copyLink}
         type="button"
       >
@@ -418,12 +430,12 @@ function ShareRow({ title, className = '', tone = 'light' }) {
 function FooterSocialRow() {
   const profiles = useSocialLinks();
   if (!profiles.length) {
-    return <ShareRow className="mt-6" title="Kenya Tours & Marketplace" tone="dark" />;
+    return <ShareRow className="mt-6" title="kenyaBook" tone="dark" />;
   }
   return (
     <div className="mt-6">
       <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#8de6e4]">Follow us</p>
-      <ul className="mt-3 flex flex-wrap items-center gap-2" aria-label="Kenya Tours & Marketplace on social media">
+      <ul className="mt-3 flex flex-wrap items-center gap-2" aria-label="kenyaBook on social media">
         {profiles.map((profile) => (
           <li key={profile.href}>
             <a
@@ -526,7 +538,12 @@ function Header() {
       if (event.key === 'Escape') setMenuOpen(false);
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    // The sheet is taller than a phone screen, so the page underneath stays put.
+    document.body.classList.add('has-open-menu');
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.classList.remove('has-open-menu');
+    };
   }, [menuOpen]);
 
   function toggleLanguage() {
@@ -557,11 +574,11 @@ function Header() {
       </div>
 
       <div className="site-header__bar">
-        <a className="brand-lockup site-brand" href="/index.html" aria-label="Kenya Tours & Marketplace — tours and accommodations across Kenya">
+        <a className="brand-lockup site-brand" href="/index.html" aria-label="kenyaBook — SafariNaStay | tours and accommodations across Kenya">
           <img className="brand-mark site-brand__mark" src="/logo.svg" alt="" />
           <span className="site-brand__text">
-            <span className="brand-name site-brand__name">Kenya Tours &amp; Marketplace</span>
-            <span className="brand-tagline site-brand__tagline">Tours &amp; accommodations · Kenya</span>
+            <span className="brand-name site-brand__name">kenyaBook</span>
+            <span className="brand-tagline site-brand__tagline">SafariNaStay</span>
           </span>
         </a>
 
@@ -660,22 +677,22 @@ function Footer() {
     <footer className="mt-20 bg-[#203b35] text-[#e8eee9]">
       <div className="mx-auto grid max-w-7xl gap-10 px-5 py-12 sm:px-8 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
         <div>
-          <a className="brand-lockup flex items-center gap-3 text-white" href="/index.html" aria-label="Kenya Tours & Marketplace home">
+          <a className="brand-lockup flex items-center gap-3 text-white" href="/index.html" aria-label="kenyaBook home">
             <img className="brand-mark h-12 w-12" src="/logo.svg" alt="" />
             <span className="flex flex-col">
-              <span className="brand-name text-lg font-bold text-white sm:text-xl">Kenya Tours & Marketplace</span>
-              <span className="brand-tagline text-[0.6rem] font-bold uppercase tracking-[0.17em] text-[#8de6e4]">Tours &amp; accommodations · Kenya</span>
+              <span className="brand-name text-lg font-bold text-white sm:text-xl">kenyaBook</span>
+              <span className="brand-tagline text-[0.6rem] font-bold tracking-[0.17em] text-[#8de6e4]">SafariNaStay</span>
             </span>
           </a>
           <p className="mt-4 max-w-sm text-sm leading-6 text-[#c4d0c9]">
-            Book the coast, the city, and the savannah with people who live there: dhow sails, heritage walks, safaris, and accommodations with a sense of place.
+            Sail the coast, wander the city, wake up in the savannah — with people who call Kenya home.
           </p>
           <NewsletterForm className="mt-6 max-w-sm" source="footer" />
           <FooterSocialRow />
         </div>
         <div>
           <h2 className="font-semibold text-white">Explore</h2>
-          <div className="mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
+          <div className="site-footer__links mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
             <a className="hover:text-white" href="/properties.html">Properties &amp; places to stay</a>
             <a className="hover:text-white" href="/tours.html">Tours &amp; guided experiences</a>
             <a className="hover:text-white" href="/safari-operators.html">Safari operators</a>
@@ -690,7 +707,7 @@ function Footer() {
         </div>
         <div>
           <h2 className="font-semibold text-white">Guides &amp; help</h2>
-          <div className="mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
+          <div className="site-footer__links mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
             <a className="hover:text-white" href="/blog.html">Blogs &amp; travel guides</a>
             <a className="hover:text-white" href="/reviews.html">Community reviews</a>
             <a className="hover:text-white" href="/faq.html">FAQ</a>
@@ -702,7 +719,7 @@ function Footer() {
         </div>
         <div>
           <h2 className="font-semibold text-white">User support</h2>
-          <div className="mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
+          <div className="site-footer__links mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
             <a className="hover:text-white" href="/how-it-works.html">How it works</a>
             <a className="hover:text-white" href="/booking-guide.html">Booking guide</a>
             <a className="hover:text-white" href="/cancellation-policy.html">Cancellation policy</a>
@@ -712,7 +729,7 @@ function Footer() {
         </div>
         <div>
           <h2 className="font-semibold text-white">Get in touch</h2>
-          <div className="mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
+          <div className="site-footer__links mt-4 flex flex-col gap-3 text-sm text-[#c4d0c9]">
             <a className="hover:text-white" href="/contact.html">Contact our team</a>
             <a className="inline-flex items-center gap-2 hover:text-white" href={CONTACT_PHONE_HREF}>
               <PhoneIcon />
@@ -726,14 +743,16 @@ function Footer() {
           </div>
         </div>
       </div>
-      <div className="border-t border-white/10 px-5 py-5 text-center text-xs text-[#c4d0c9]">
-        © 2026 Kenya Tours &amp; Marketplace. All rights reserved.
+      <div className="border-t border-white/10 px-5 pb-16 pt-5 text-center text-xs text-[#c4d0c9] sm:pb-5">
+        © 2026 kenyaBook. All rights reserved.
       </div>
     </footer>
   );
 }
 
 function PageShell({ children }) {
+  const phone = useWhatsAppPhone();
+
   return (
     <>
       <a className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-full focus:bg-white focus:px-5 focus:py-3 focus:font-semibold focus:text-[#203b35] focus:shadow-xl" href="#main-content">
@@ -743,26 +762,8 @@ function PageShell({ children }) {
       <main id="main-content" tabIndex={-1}>{children}</main>
       <Footer />
       <CompareTray />
-      <FloatingWhatsApp />
+      <LiveChat whatsappHref={whatsappUrl(WHATSAPP_GREETING, phone)} />
     </>
-  );
-}
-
-function FloatingWhatsApp() {
-  const phone = useWhatsAppPhone();
-
-  return (
-    <a
-      className="fixed bottom-5 right-5 z-50 inline-flex min-h-14 items-center gap-3 rounded-full bg-[#16833b] px-4 text-sm font-bold text-white shadow-xl shadow-slate-950/25 transition hover:-translate-y-1 hover:bg-[#116b30] focus-visible:outline-white sm:bottom-7 sm:right-7"
-      href={whatsappUrl(WHATSAPP_GREETING, phone)}
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label="Chat with Kenya Tours & Marketplace on WhatsApp (opens in a new tab)"
-      title="Chat with us on WhatsApp"
-    >
-      <WhatsAppIcon className="h-7 w-7 shrink-0" />
-      <span className="hidden sm:inline">Chat with us</span>
-    </a>
   );
 }
 
@@ -799,11 +800,11 @@ function TourCard({ tour, currency }) {
         <WishlistButton className="absolute right-3 top-3 z-10" listingType="tour" name={tour.name} slug={tour.slug} />
       </div>
       <div className="p-5">
-        <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[#a75f3a]">{tour.category || 'Experiences'}</p>
-        <div className="flex items-start justify-between gap-3">
-          <h3 className="display-font text-2xl text-[#203b35]">{tour.name}</h3>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <p className="text-xs font-bold uppercase tracking-wider text-[#a75f3a]">{tour.category || 'Experiences'}</p>
           <span className="shrink-0 rounded-full bg-[#f3eee6] px-3 py-1 text-xs font-semibold text-[#735744]">{tour.duration}</span>
         </div>
+        <h3 className="display-font text-2xl text-[#203b35]">{tour.name}</h3>
         {tour.operator && tour.operator.slug && <OperatorCredit operator={tour.operator} />}
         <BadgeList badges={tour.badges} />
         {tour.review_count > 0 && <p className="mt-2 flex items-center gap-2 text-sm text-[#52615b]">
@@ -811,9 +812,9 @@ function TourCard({ tour, currency }) {
           <span>{Number(tour.rating).toFixed(1)}</span>
           <span>· {tour.review_count} review{tour.review_count === 1 ? '' : 's'}</span>
         </p>}
-        <p className="mt-3 line-clamp-3 min-h-[4.5rem] text-sm leading-6 text-[#52615b]">{tour.description}</p>
+        <p className="mt-3 line-clamp-3 text-sm leading-6 text-[#52615b] sm:min-h-[4.5rem]">{tour.description}</p>
         <CompareToggle className="mt-4" name={tour.name} slug={tour.slug} type="tour" />
-        <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#efede7] pt-4">
+        <div className="mt-5 flex flex-col gap-3 border-t border-[#efede7] pt-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm text-[#52615b]">
               From <strong className="text-base text-[#203b35]">{formatPrice(tour.price, currency)}</strong>
@@ -821,7 +822,7 @@ function TourCard({ tour, currency }) {
             </p>
             <p className="mt-1 text-xs font-semibold text-[#177b5b]">{priceComparisonText(tour.price_comparison)}</p>
           </div>
-          <a className="rounded-full bg-[#203b35] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#31554b]" href={`/tour-details.html?id=${encodeURIComponent(tour.slug)}`} onClick={() => trackPromotionClick('tour', tour.slug, tour.promotion)}>
+          <a className="whitespace-nowrap rounded-full bg-[#203b35] px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-[#31554b]" href={`/tour-details.html?id=${encodeURIComponent(tour.slug)}`} onClick={() => trackPromotionClick('tour', tour.slug, tour.promotion)}>
             Discover this tour
           </a>
         </div>
@@ -854,7 +855,7 @@ function PropertyCard({ property, currency }) {
         </p>
         <p className="mt-1 text-xs font-semibold text-[#177b5b]">{priceComparisonText(property.price_comparison)}</p>
         {property.description && <p className="mt-3 line-clamp-2 text-sm leading-6 text-[#52615b]">{property.description}</p>}
-        <a className="mt-4 inline-flex rounded-full border border-[#203b35] px-4 py-2.5 text-sm font-semibold text-[#203b35] hover:bg-[#203b35] hover:text-white" href={`/booking.html?stay=${encodeURIComponent(property.slug)}&guests=${property.guests}`} onClick={() => trackPromotionClick('property', property.slug, property.promotion)}>
+        <a className="mt-4 flex w-full justify-center rounded-full border border-[#203b35] px-4 py-2.5 text-sm font-semibold text-[#203b35] hover:bg-[#203b35] hover:text-white sm:inline-flex sm:w-auto" href={`/booking.html?stay=${encodeURIComponent(property.slug)}&guests=${property.guests}`} onClick={() => trackPromotionClick('property', property.slug, property.promotion)}>
           Ask us about this accommodation
         </a>
         <CompareToggle className="mt-3" name={property.name} slug={property.slug} type="property" />
@@ -1114,7 +1115,7 @@ function ReviewPanel({ targetType, targetId }) {
     <div className="mt-4">
       {loading && <p className="text-sm text-[#52615b]" role="status">Loading reviews…</p>}
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-800" role="alert">{error}</p>}
-      {!loading && !error && reviews.length === 0 && <p className="text-sm text-[#52615b]">No guest reviews yet.</p>}
+      {!loading && !error && reviews.length === 0 && <p className="text-sm text-[#52615b]">No guest reviews yet — yours could be the first.</p>}
       {!loading && !error && reviews.length > 0 && <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#203b35]">
         <StarRow rating={summary.rating} />
         <span>{Number(summary.rating).toFixed(1)} / 5</span>
@@ -1207,12 +1208,13 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
               <span className="h-px w-10 bg-current opacity-70" aria-hidden="true" />
               Coast · City · Savannah · Rift Valley
             </p>
-            <h1 className="display-font text-[2.85rem] leading-[1.03] sm:text-6xl lg:text-7xl">Kenya, one destination at a time.</h1>
-            <p className="mt-6 max-w-xl text-base leading-8 text-white/85 sm:text-lg">
-              Sail a dhow off Lamu, walk the old streets of Mombasa, cycle beneath the Rift Valley cliffs, then watch the sun go down over the Mara.
+            <h1 className="display-font text-[2.85rem] leading-[1.03] sm:text-6xl lg:text-7xl">Kenya, one unforgettable day at a time.</h1>
+            <p className="display-font mt-5 text-2xl text-[#a9e2e5] sm:text-3xl">SafariNaStay</p>
+            <p className="mt-4 max-w-xl text-base leading-8 text-white/85 sm:text-lg">
+              Sail a dhow into the sunset, lose yourself in a Swahili old town, then wake up to the sound of the savannah. Kenya, arranged around you.
             </p>
             <div className="mt-9 flex flex-wrap gap-3">
-              <ButtonLink href="/tours.html">Find your Kenyan experience</ButtonLink>
+              <ButtonLink href="/tours.html">Start your Kenya story</ButtonLink>
               <ButtonLink href="/about-kenya.html" secondary>Get to know Kenya</ButtonLink>
             </div>
             <div className="mt-10 flex flex-wrap gap-3">
@@ -1225,13 +1227,13 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
             </div>
             <a className="scroll-cue mt-10" href="#stories">
               <span className="scroll-cue__dot" aria-hidden="true" />
-              Scroll to explore
+              Scroll into the story
             </a>
           </div>
         </div>
         <div className="hero-float absolute bottom-6 right-6 hidden max-w-xs rounded-2xl border border-white/25 bg-[#06222f]/55 p-5 text-sm text-white backdrop-blur md:block">
-          <span className="block font-semibold">Six regions. One country.</span>
-          <span className="mt-1 block text-white/75">Coastal Swahili towns, big-city wildlife, and open savannah — all booked through one team.</span>
+          <span className="block font-semibold">Six regions. Endless stories.</span>
+          <span className="mt-1 block text-white/75">Swahili coast, city wildlife and open savannah — planned by locals, booked in one place.</span>
         </div>
       </section>
 
@@ -1239,9 +1241,9 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         <section className="mx-auto max-w-7xl px-5 pt-14 sm:px-8 sm:pt-16">
           <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
             <SectionHeading
-              eyebrow="Sponsored placements"
-              title="Featured partners this month."
-              description="Paid placements from partners we work with. Every sponsored card is labelled, and the rest of the marketplace stays ranked on bookings, guest ratings and price."
+              eyebrow="Partner spotlight"
+              title="Handpicked partners, this month."
+              description="Meet the operators and hosts we are proud to work with. Every sponsored card is clearly labelled, and everything else stays ranked on real bookings, guest ratings and price."
             />
             <ButtonLink className="mb-8 self-start" href="/tours.html">Browse every experience →</ButtonLink>
           </div>
@@ -1257,8 +1259,8 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
           <SectionHeading
             eyebrow="Explore by category"
-            title="Start with the kind of trip you have in mind."
-            description="Luxury lodges, budget rooms, day tours, overnight safaris and adventure activities — pick a category and see what is bookable right now."
+            title="Choose your kind of adventure."
+            description="Boutique lodges, simple rooms, day tours, overnight safaris and adventure days — pick a mood and see what is bookable right now."
           />
           <ButtonLink className="mb-8 self-start" href="/explore.html">See all categories →</ButtonLink>
         </div>
@@ -1271,8 +1273,8 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
           <SectionHeading
             eyebrow="Browse by region"
-            title="Six regions, one country."
-            description="Nairobi and the Rift Valley lakes, the Maasai Mara, Amboseli, Tsavo, the Indian Ocean coast and the Mount Kenya highlands. Pick a region to see every destination, tour and stay inside it."
+            title="Six regions. Six different holidays."
+            description="Rift Valley lakes, the Maasai Mara, Amboseli, Tsavo, the Indian Ocean coast and the Mount Kenya highlands. Choose a region and see everything you can book inside it."
           />
           <ButtonLink className="mb-8 self-start" href="/destinations.html">Explore all regions →</ButtonLink>
         </div>
@@ -1285,7 +1287,7 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
         <SectionHeading
           eyebrow="Make it your own"
           title="Make room for a different kind of getaway."
-          description="Trade the rush for dhow sails, old-town stories, and slow mornings beside the sea. Start with the experience that feels most like you."
+          description="Swap the rush for dhow sails, old-town stories and slow mornings by the sea. Begin with whichever sounds most like you."
         />
         <div className="grid gap-5 md:grid-cols-3">
           {HOME_STORIES.map((story) => (
@@ -1342,8 +1344,8 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
           <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
             <SectionHeading
               eyebrow="Beyond the tour"
-              title="Transfers, guides and the services that make a trip easy."
-              description="Safari and tour operators also run the practical extras: airport pickups, private guides, 4x4 hire and more. Ask for a quote with your dates."
+              title="The little things that make a trip effortless."
+              description="Airport pickups, private guides, 4x4 hire and more, run by the same operators who lead the tours. Ask for a quote with your dates."
             />
             <ButtonLink className="mb-8 self-start" href="/services.html">Browse all services →</ButtonLink>
           </div>
@@ -1355,8 +1357,8 @@ function HomePage({ catalogue, loading, error, retry, currency }) {
 
       <RecommendationStrip
         currency={currency}
-        description="Tours and stays ranked from verified bookings, guest ratings and price value."
-        title="Trending now"
+        description="Ranked on verified bookings, guest ratings and real value — never paid placement."
+        title="What travellers are booking right now"
       />
 
       <section className="mx-auto max-w-7xl px-5 py-16 sm:px-8 sm:py-24">
@@ -1495,7 +1497,7 @@ function ToursPage({ catalogue, loading, error, retry, currency }) {
     <PageShell>
       <PageBanner eyebrow="Find your Kenya" title="Come for one place. Leave with a story from every region." description="Sail a dhow on the coast, follow old-town lanes, cycle beneath the Rift Valley cliffs, or spend a morning on safari. Every experience is led by people who know their corner of Kenya by heart." />
       <section className="mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20">
-        <SectionHeading eyebrow="Made memorable by local knowledge" title="Your next Kenyan story starts here." description="Filter by destination or by the kind of day you want, then explore the details and pick a published departure time." />
+        <SectionHeading eyebrow="Made memorable by local knowledge" title="Your next Kenyan story starts here." description="Filter by destination or by the kind of day you want, then choose a published departure and go." />
         {loading || error ? <LoadingState error={error} onRetry={retry} /> : (
           <>
             <div className="mb-4 flex flex-wrap items-center gap-2" aria-label="Browse experiences by category">
@@ -1540,7 +1542,7 @@ function ToursPage({ catalogue, loading, error, retry, currency }) {
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {visibleTours.map((tour) => <TourCard currency={currency} key={tour.slug} tour={tour} />)}
               {catalogue.tours.length === 0 && <p className="text-[#52615b]">Tours are being added. Please check back soon.</p>}
-              {catalogue.tours.length > 0 && visibleTours.length === 0 && <p className="text-[#52615b]">No experiences match this destination and category yet. Try All experiences, All Kenya or another category.</p>}
+              {catalogue.tours.length > 0 && visibleTours.length === 0 && <p className="text-[#52615b]">Nothing in this corner of Kenya yet — try All experiences, All Kenya or another category.</p>}
             </div>
           </>
         )}
@@ -1565,8 +1567,8 @@ function ServicesPage({ catalogue, currency, loading, error, retry }) {
   return (
     <PageShell>
       <PageBanner
-        eyebrow="Every detail of the journey"
-        title="Transfers, guides, vehicles and the services that hold a trip together."
+        eyebrow="Every detail, handled"
+        title="The extras that hold a whole trip together."
         description="Safari and tour operators list the extras they run themselves: airport pickups, private guides, 4x4 hire, photography, catering and equipment. Prices are a starting point, so send a quote request with your dates."
       />
       <section className="mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20">
@@ -1600,7 +1602,7 @@ function ServicesPage({ catalogue, currency, loading, error, retry }) {
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {visibleServices.map((service) => <ServiceCard currency={currency} key={service.slug} service={service} />)}
               {services.length === 0 && <p className="text-[#52615b]">Services are being added. Please check back soon, or ask our team for a transfer or guide.</p>}
-              {services.length > 0 && visibleServices.length === 0 && <p className="text-[#52615b]">No services match these filters yet. Try All Kenya or All services.</p>}
+              {services.length > 0 && visibleServices.length === 0 && <p className="text-[#52615b]">No extras match those filters yet — try All Kenya or All services.</p>}
             </div>
             {operators.length > 0 && (
               <div className="mt-16 border-t border-[#e9e5db] pt-10">
@@ -1696,8 +1698,8 @@ function PropertiesPage({ catalogue, currency, loading, error, retry }) {
     <PageShell>
       <PageBanner
         eyebrow="Places to stay"
-        title="Hotels, lodges, resorts and vacation rentals across Kenya."
-        description="Every stay below is listed by the host who runs it: city hotels, beach lodges, safari camps, resorts and self-catering rentals. Compare what is included, then ask for a quote with your dates."
+        title="A beautiful place to land, wherever the road takes you."
+        description="City hotels, beach lodges, safari camps, resorts and self-catering rentals — each listed by the host who runs it. Compare what is included, then ask for a quote with your dates."
       />
       <section className="mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20">
         <SectionHeading
@@ -1755,7 +1757,7 @@ function PropertiesPage({ catalogue, currency, loading, error, retry }) {
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {visible.map((property) => <PropertyCard currency={currency} key={property.slug} property={property} />)}
               {properties.length === 0 && <p className="text-[#52615b]">Accommodation is being added. Please check back soon, or ask our team to find something for your dates.</p>}
-              {properties.length > 0 && visible.length === 0 && <p className="text-[#52615b]">Nothing matches these filters yet. Try All stays, All property types or All Kenya.</p>}
+              {properties.length > 0 && visible.length === 0 && <p className="text-[#52615b]">No stays match those filters yet — try All stays, All property types or All Kenya.</p>}
             </div>
             {typeSlugs.length > 0 && (
               <p className="mt-10 text-sm leading-6 text-[#52615b]">
@@ -1855,7 +1857,7 @@ function SafariOperatorsPage({ catalogue, loading, error, retry }) {
                 );
               })}
               {operators.length === 0 && <p className="text-[#52615b]">Operator profiles are being added. In the meantime, our team can connect you with a licensed company for your dates.</p>}
-              {operators.length > 0 && visible.length === 0 && <p className="text-[#52615b]">No operators match this business type yet. Try All operators.</p>}
+              {operators.length > 0 && visible.length === 0 && <p className="text-[#52615b]">No operators run this kind of trip yet — try All operators.</p>}
             </div>
             <div className="mt-12 rounded-2xl bg-[#e9eee8] p-6 sm:p-8">
               <h2 className="display-font text-2xl text-[#203b35]">Run safaris or tours in Kenya?</h2>
@@ -1882,8 +1884,8 @@ function DestinationsPage({ catalogue, loading, error, retry }) {
     <PageShell>
       <PageBanner
         eyebrow="Browse by region"
-        title="Six regions, one country."
-        description="Nairobi and the Rift Valley lakes, the Maasai Mara, Amboseli, Tsavo, the Indian Ocean coast and the Mount Kenya highlands. Pick a region, then a destination, and go straight to the tours and places to stay there."
+        title="Six regions. Pick your kind of Kenya."
+        description="Coast, capital, highlands and savannah. Choose a region, then a destination, and go straight to the tours and stays there."
       />
       <section className="mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20">
         <SectionHeading
@@ -2191,7 +2193,7 @@ function CommunityReviewsPage() {
         {error && <p className="mt-6 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
         {loading && !data && <p className="mt-6 text-sm text-[#52615b]" role="status">Loading guest reviews…</p>}
         {!loading && !error && summary?.review_count > 0 && reviews.length === 0 && (
-          <p className="mt-6 rounded-2xl border border-dashed border-[#d9d3c4] p-8 text-center text-sm text-[#52615b]">No reviews match that filter yet. Try another rating or type.</p>
+          <p className="mt-6 rounded-2xl border border-dashed border-[#d9d3c4] p-8 text-center text-sm text-[#52615b]">No reviews with that filter yet — try another rating or type.</p>
         )}
         <div className="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
           {reviews.map((review) => <ReviewQuote key={review.id} review={review} />)}
@@ -2326,7 +2328,7 @@ function PhotoGalleryPage({ catalogue, loading }) {
           ))}
         </div>
         {visible.length === 0 && (
-          <p className="mt-8 rounded-2xl border border-dashed border-[#d9d3c4] p-8 text-center text-sm text-[#52615b]">No photographs in this filter yet. Try another region.</p>
+          <p className="mt-8 rounded-2xl border border-dashed border-[#d9d3c4] p-8 text-center text-sm text-[#52615b]">No photographs under that filter yet — try another region.</p>
         )}
       </section>
       {activeIndex >= 0 && visible[activeIndex] && (
@@ -2415,7 +2417,7 @@ function comparisonRows(listings, destinationNames, currency) {
       label: 'Run by',
       get: (listing) => (listing.operator?.name
         ? `${listing.operator.name}${listing.operator.location ? ` · ${listing.operator.location}` : ''}`
-        : 'Kenya Tours & Marketplace'),
+        : 'kenyaBook'),
     },
   );
 
@@ -2523,16 +2525,17 @@ function ComparePage({ catalogue, currency, loading, error, retry }) {
             </div>
             {copyState === 'copied' && <p className="mb-4 text-sm font-semibold text-[#177b5b]" role="status">Comparison link copied.</p>}
             {copyState === 'failed' && <p className="mb-4 text-sm font-semibold text-[#9a5534]" role="status">Your browser blocked the copy. Use the address bar instead.</p>}
+            <p className="mb-3 text-xs font-semibold text-[#52615b] sm:hidden">Swipe the table sideways to see every listing.</p>
             <div className="overflow-x-auto rounded-3xl border border-[#e9e5db] bg-white shadow-sm">
-              <table className="w-full min-w-[48rem] border-collapse text-sm">
+              <table className="w-full min-w-[36rem] border-collapse text-sm sm:min-w-[48rem]">
                 <caption className="sr-only">Side-by-side comparison of the selected tours and places to stay</caption>
                 <thead>
                   <tr>
-                    <th className="sticky left-0 z-10 w-32 border-b border-[#efede7] bg-white p-4 text-left align-bottom text-xs font-bold uppercase tracking-wider text-[#735744]" scope="col">
+                    <th className="sticky left-0 z-10 w-24 border-b border-[#efede7] bg-white p-3 text-left align-bottom text-[0.65rem] font-bold uppercase tracking-wider text-[#735744] sm:w-32 sm:p-4 sm:text-xs" scope="col">
                       Compare
                     </th>
                     {resolved.map((listing) => (
-                      <th className="min-w-56 border-b border-l border-[#efede7] p-4 align-top text-left font-normal" key={compareKey(listing)} scope="col">
+                      <th className="min-w-[8.5rem] border-b border-l border-[#efede7] p-3 align-top text-left font-normal sm:min-w-56 sm:p-4" key={compareKey(listing)} scope="col">
                         <img alt={listing.name} className="h-28 w-full rounded-xl object-cover" loading="lazy" src={imageUrl(listing.image_url)} />
                         <p className="mt-3 text-[0.65rem] font-bold uppercase tracking-[0.14em] text-[#a75f3a]">{COMPARE_TYPE_LABELS[listing.type]}</p>
                         <p className="display-font mt-1 text-lg leading-snug text-[#203b35]">{listing.name}</p>
@@ -2547,11 +2550,11 @@ function ComparePage({ catalogue, currency, loading, error, retry }) {
                 <tbody>
                   {rows.map((row) => (
                     <tr className={row.differs ? 'bg-[#fdf6ee]' : 'bg-white'} key={row.label}>
-                      <th className={`sticky left-0 z-10 border-b border-[#efede7] p-4 text-left align-top text-xs font-bold uppercase tracking-wider text-[#735744] ${row.differs ? 'bg-[#fdf6ee]' : 'bg-white'}`} scope="row">
+                      <th className={`sticky left-0 z-10 border-b border-[#efede7] p-3 text-left align-top text-[0.65rem] font-bold uppercase tracking-wider text-[#735744] sm:p-4 sm:text-xs ${row.differs ? 'bg-[#fdf6ee]' : 'bg-white'}`} scope="row">
                         {row.label}
                       </th>
                       {row.values.map((value, index) => (
-                        <td className="border-b border-l border-[#efede7] p-4 align-top leading-6 text-[#33443f]" key={compareKey(resolved[index])}>
+                        <td className="border-b border-l border-[#efede7] p-3 align-top leading-6 text-[#33443f] sm:p-4" key={compareKey(resolved[index])}>
                           {value === '—' ? <span className="text-[#b3ad9f]">—</span> : value}
                         </td>
                       ))}
@@ -2774,7 +2777,7 @@ function FaqPage() {
     <PageShell>
       <PageBanner
         eyebrow="Frequently asked questions"
-        title="Answers to the questions we get asked most."
+        title="Good questions, straight answers."
         description="Bookings, payments, accommodation, safaris and travelling in Kenya. If your question is not here, our team is one message away."
       />
       <section className="mx-auto max-w-4xl px-5 py-14 sm:px-8 sm:py-20">
@@ -2938,8 +2941,8 @@ function ExplorePage({ catalogue, loading, error, retry }) {
     <PageShell>
       <PageBanner
         eyebrow="Explore by category"
-        title="Start with the kind of trip you have in mind."
-        description="Luxury lodges or good-value rooms, a single day out or a safari with nights in the park. Pick a category and see exactly what is bookable right now."
+        title="Choose your kind of adventure."
+        description="Boutique lodges or good-value rooms, a single day out or a safari with nights in the park. Choose a category and see exactly what is bookable right now."
       />
       <section className="mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20">
         {loading || error ? <LoadingState error={error} onRetry={retry} /> : EXPLORE_GROUPS.map((group) => (
@@ -3164,8 +3167,9 @@ function SearchPage({ catalogue, currency }) {
     <PageShell>
       <section className="bg-[#203b35] px-5 py-14 text-white sm:px-8 sm:py-20">
         <div className="mx-auto max-w-4xl">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f1b28b]">Search the marketplace</p>
-          <h1 className="display-font mt-4 text-4xl leading-tight sm:text-5xl">Find tours, accommodations and places across Kenya.</h1>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f1b28b]">Every corner of Kenya, one search</p>
+          <h1 className="display-font mt-4 text-4xl leading-tight sm:text-5xl">Find the Kenya you were picturing.</h1>
+          <p className="mt-4 max-w-2xl leading-7 text-white/75">Tours, safaris, rooms and whole destinations — every listing on kenyaBook, searchable in one place.</p>
           <form className="mt-7" role="search" onSubmit={submitSearch}>
             <div className="flex flex-col gap-3 sm:flex-row">
               <label className="sr-only" htmlFor="search-page-input">Search tours, accommodations and places</label>
@@ -3204,7 +3208,7 @@ function SearchPage({ catalogue, currency }) {
           <div>
             <h2 className="display-font text-3xl text-[#203b35]">Start with a place, a tour, or a feeling</h2>
             <p className="mt-3 max-w-2xl leading-7 text-[#52615b]">
-              Search titles, descriptions, amenities and destinations across every tour, accommodation and place on the marketplace. Type at least two letters.
+              Everything on kenyaBook is searchable: tours, safaris, rooms, beaches, amenities and destinations. Two letters is all it takes to begin.
             </p>
             <div className="mt-6">
               <SearchSuggestions onSelect={runSuggestion} suggestions={suggestions} />
@@ -3234,7 +3238,7 @@ function SearchPage({ catalogue, currency }) {
             {loading && results.length === 0 && <p className="py-8 text-center text-[#52615b]" role="status">Searching every listing…</p>}
             {!loading && !error && results.length === 0 && (
               <div className="rounded-2xl bg-[#f5f3ed] p-6">
-                <p className="text-[#52615b]">No listings match “{trimmedQuery}”. Try a destination such as Lamu, or a shorter keyword.</p>
+                <p className="text-[#52615b]">Nothing here answers “{trimmedQuery}” yet. Try a shorter word, or start with a destination such as Lamu.</p>
                 <div className="mt-4">
                   <SearchSuggestions onSelect={runSuggestion} suggestions={suggestions.slice(0, 5)} />
                 </div>
@@ -3263,11 +3267,11 @@ function SearchPage({ catalogue, currency }) {
 
 function PageBanner({ eyebrow, title, description }) {
   return (
-    <section className="bg-[#203b35] px-5 py-16 text-white sm:px-8 sm:py-24">
+    <section className="bg-[#203b35] px-5 py-10 text-white sm:px-8 sm:py-24">
       <div className="mx-auto max-w-7xl">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f1b28b]">{eyebrow}</p>
-        <h1 className="display-font mt-4 max-w-4xl text-4xl leading-tight sm:text-6xl">{title}</h1>
-        <p className="mt-5 max-w-2xl text-lg leading-8 text-white/75">{description}</p>
+        <h1 className="display-font mt-3 max-w-4xl text-[1.9rem] leading-tight sm:mt-4 sm:text-5xl lg:text-6xl">{title}</h1>
+        <p className="mt-4 max-w-2xl text-base leading-7 text-white/75 sm:mt-5 sm:text-lg sm:leading-8">{description}</p>
       </div>
     </section>
   );
@@ -3311,6 +3315,12 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
       ? (selectedRoom ? selectedRoom.total : selectedListing.price * stayNights)
       : selectedListing.price * Number(guests || 1)
     : 0;
+  // Split fee model: the guest pays the host's subtotal plus a service fee and
+  // a flat booking fee; the host is charged a commission on their payout.
+  const guestServiceFeeRate = Number(catalogue.fees?.guest_service_fee_rate ?? 9);
+  const serviceFee = Math.round((total * guestServiceFeeRate) / 100);
+  const bookingFee = total > 0 ? Number(catalogue.fees?.booking_fee ?? 100) : 0;
+  const payableTotal = total + serviceFee + bookingFee;
   const errorMessage = params.get('error');
   const departureDates = [...new Set(schedules.map((item) => item.starts_at.slice(0, 10)))];
   const daySchedules = schedules.filter((item) => item.starts_at.startsWith(selectedDate));
@@ -3439,24 +3449,30 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
         ];
         const message = language === 'sw'
           ? [
-            'Habari Kenya Tours, tafadhali thibitisheni malazi haya:',
+            'Habari kenyaBook, tafadhali thibitisheni malazi haya:',
             ...contactLines,
             `Malazi: ${selectedListing.name} (${selectedListing.location})`,
             `Kuingia: ${dateLabel(checkInDate)}`,
             `Kutoka: ${dateLabel(checkOutDate)} (${stayNights} usiku)`,
             `Wageni: ${guests}`,
-            `Jumla ya makadirio: ${formatKenyanShillings(total)}`,
+            `Jumla ndogo: ${formatKenyanShillings(total)}`,
+            `Ada ya huduma (${guestServiceFeeRate}%): ${formatKenyanShillings(serviceFee)}`,
+            `Ada ya uhifadhi: ${formatKenyanShillings(bookingFee)}`,
+            `Jumla inayolipwa: ${formatKenyanShillings(payableTotal)}`,
             ...(details ? [`Maelezo: ${details}`] : []),
             'Tafadhali thibitisheni nafasi na mtumie hatua za malipo ya kimataifa. Nafasi haitahifadhiwa hadi mthibitisho.',
           ].join('\n')
           : [
-            'Hello Kenya Tours, please confirm this accommodation before I pay:',
+            'Hello kenyaBook, please confirm this accommodation before I pay:',
             ...contactLines,
             `Accommodation: ${selectedListing.name} (${selectedListing.location})`,
             `Check-in: ${dateLabel(checkInDate)}`,
             `Check-out: ${dateLabel(checkOutDate)} (${stayNights} ${stayNights === 1 ? 'night' : 'nights'})`,
             `Guests: ${guests}`,
-            `Estimated accommodation total: ${formatKenyanShillings(total)}`,
+            `Accommodation subtotal: ${formatKenyanShillings(total)}`,
+            `Service fee (${guestServiceFeeRate}%): ${formatKenyanShillings(serviceFee)}`,
+            `Booking fee: ${formatKenyanShillings(bookingFee)}`,
+            `Total including service fee: ${formatKenyanShillings(payableTotal)}`,
             ...(details ? [`Notes: ${details}`] : []),
             'Please confirm availability and share international payment options. I understand this request does not hold the accommodation until confirmed.',
           ].join('\n');
@@ -3470,7 +3486,7 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
         : `${data.date} at ${data.time} Kenya time`;
       const details = String(data.message || '').trim();
       const message = [
-        'Hello Kenya Tours, I am an international traveler and would like to arrange this booking:',
+        'Hello kenyaBook, I am an international traveler and would like to arrange this booking:',
         `Name: ${data.name}`,
         `Email: ${data.email}`,
         `Country: ${data.country_of_residence}`,
@@ -3478,7 +3494,10 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
         `Experience: ${selectedListing?.name || data.tour}`,
         `Preferred departure: ${dateLabel}`,
         `Guests: ${guests}`,
-        `Estimated total: ${formatKenyanShillings(total)}${currency.code !== 'KES' ? ` (approximately ${formatPrice(total, currency)})` : ''}`,
+        `Subtotal: ${formatKenyanShillings(total)}`,
+        `Service fee (${guestServiceFeeRate}%): ${formatKenyanShillings(serviceFee)}`,
+        `Booking fee: ${formatKenyanShillings(bookingFee)}`,
+        `Total including service fee: ${formatKenyanShillings(payableTotal)}${currency.code !== 'KES' ? ` (approximately ${formatPrice(payableTotal, currency)})` : ''}`,
         ...(details ? [`Notes: ${details}`] : []),
         'Please confirm availability and share international payment options. I understand this request does not reserve a place until confirmed.',
       ].join('\n');
@@ -3528,7 +3547,7 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
           </p>}
           {errorMessage && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{errorMessage}</p>}
           {submitError && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{submitError}</p>}
-          {stayQuoteUrl && <div className="mt-5 rounded-xl bg-[#e9eee8] p-4" role="status"><p className="text-sm text-[#203b35]">Your accommodation request is ready. The host will confirm dates before payment.</p><a className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={stayQuoteUrl} target="_blank" rel="noreferrer">{catalogue.whatsapp_business_phone ? 'Message Kenya Tours on WhatsApp' : 'Share enquiry in WhatsApp'}</a></div>}
+          {stayQuoteUrl && <div className="mt-5 rounded-xl bg-[#e9eee8] p-4" role="status"><p className="text-sm text-[#203b35]">Your accommodation request is ready. The host will confirm dates before payment.</p><a className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={stayQuoteUrl} target="_blank" rel="noreferrer">{catalogue.whatsapp_business_phone ? 'Message kenyaBook on WhatsApp' : 'Share enquiry in WhatsApp'}</a></div>}
           {loading || error ? <div className="mt-6"><LoadingState error={error} onRetry={retry} /></div> : (
             <form className="mt-7 grid gap-x-5 gap-y-5 sm:grid-cols-2" onSubmit={submitBooking}>
               <label className="sm:col-span-2">
@@ -3654,19 +3673,33 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
                 <textarea className="field min-h-28 resize-y" name="message" rows="4" />
               </label>
               <div className="rounded-xl bg-[#f5f3ed] p-4 sm:col-span-2">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-sm text-[#52615b]">Estimated total</span>
-                  <strong className="text-lg text-[#203b35]">{formatKenyanShillings(total)}</strong>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-4 text-sm">
+                    <span className="text-[#52615b]">Subtotal</span>
+                    <span className="tabular-nums text-[#203b35]">{formatKenyanShillings(total)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 text-sm">
+                    <span className="text-[#52615b]">Service fee ({guestServiceFeeRate}%)</span>
+                    <span className="tabular-nums text-[#203b35]">{formatKenyanShillings(serviceFee)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 text-sm">
+                    <span className="text-[#52615b]">Booking fee</span>
+                    <span className="tabular-nums text-[#203b35]">{formatKenyanShillings(bookingFee)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 border-t border-[#e6e1d6] pt-2">
+                    <span className="text-sm font-semibold text-[#203b35]">Total to pay</span>
+                    <strong className="text-lg text-[#203b35]">{formatKenyanShillings(payableTotal)}</strong>
+                  </div>
                 </div>
-                <p className="mt-1 text-xs text-[#52615b]">{selectedListing?.kind === 'stay'
+                <p className="mt-2 text-xs text-[#52615b]">{selectedListing?.kind === 'stay'
                   ? selectedRoom
                     ? language === 'sw'
-                      ? `${stayNights} usiku kwa ${formatKenyanShillings(selectedRoom.rate)} kwa usiku katika ${selectedRoom.name}. Jumla imehesabiwa na mwenyeji.`
-                      : `${stayNights} ${stayNights === 1 ? 'night' : 'nights'} at ${formatKenyanShillings(selectedRoom.rate)} per night in ${selectedRoom.name}. The total is calculated by the host and confirmed before payment.`
+                      ? `${stayNights} usiku kwa ${formatKenyanShillings(selectedRoom.rate)} kwa usiku katika ${selectedRoom.name}. Ada ya huduma ya ${guestServiceFeeRate}% na ada ya uhifadhi ya ${formatKenyanShillings(bookingFee)} zimeongezwa kwenye jumla.`
+                      : `${stayNights} ${stayNights === 1 ? 'night' : 'nights'} at ${formatKenyanShillings(selectedRoom.rate)} per night in ${selectedRoom.name}. The ${guestServiceFeeRate}% service fee and a ${formatKenyanShillings(bookingFee)} booking fee are added at checkout.`
                     : language === 'sw'
                       ? 'Chagua chumba kinachopatikana ili kuona jumla ya malazi.'
                       : 'Choose an available room to see the accommodation total.'
-                  : `Charged in Kenyan shillings (KES). Tour prices are per person.${currency.code !== 'KES' ? ` Approximate total in ${currency.code}: ${formatPrice(total, currency)}.` : ''}`}</p>
+                  : `Charged in Kenyan shillings (KES). Tour prices are per person.${currency.code !== 'KES' ? ` Approximate total in ${currency.code}: ${formatPrice(payableTotal, currency)}.` : ''}`}</p>
               </div>
               <button className="min-h-12 rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38] disabled:opacity-50 sm:col-span-2" type="submit" disabled={submitting || (selectedListing?.kind === 'tour' && (!selectedSchedule || Number(guests) > selectedSchedule.remaining || availabilityLoading)) || (selectedListing?.kind === 'stay' && (stayNights < 1 || (travelerType === 'domestic' && (!selectedRoom || !selectedRoom.is_available))))}>
                 {selectedListing?.kind === 'stay'
@@ -3792,9 +3825,11 @@ function ContactPage() {
         <div>
           <SectionHeading eyebrow="Get in touch" title="Tell us what you have in mind." description="A tour, accommodation, a question about your plans—we’re listening. Send a note and our team will follow up." />
           <div className="rounded-2xl bg-[#e9eee8] p-6">
-            <p className="font-semibold text-[#203b35]">Kenya Tours &amp; Marketplace</p>
+            <p className="font-semibold text-[#203b35]">kenyaBook</p>
+            <p className="mt-1 text-xs font-bold tracking-[0.16em] text-[#a75f3a]">SafariNaStay</p>
             <p className="mt-3 text-sm leading-6 text-[#52615b]">
               Kenya<br />
+              <a className="inline-flex items-center gap-2 font-medium text-[#9a5534] hover:underline" href="mailto:info@kenyabook.com">info@kenyabook.com</a><br />
               <a className="inline-flex items-center gap-2 font-medium text-[#9a5534] hover:underline" href={CONTACT_PHONE_HREF}>
                 <PhoneIcon />
                 <span>Call {CONTACT_PHONE_DISPLAY}</span>
@@ -3855,7 +3890,7 @@ function TourDetailPage({ catalogue, loading, error, retry, currency }) {
       <section className="mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
         <a className="text-sm font-semibold text-[#9a5534] hover:underline" href="/tours.html">← All tours</a>
         <div className="mt-6 grid gap-10 lg:grid-cols-[1.15fr_0.85fr]">
-          <img className="max-h-[34rem] w-full rounded-3xl object-cover" src={imageUrl(tour.image_url)} alt={tour.name} />
+          <img className="max-h-[18rem] w-full rounded-3xl object-cover sm:max-h-[34rem]" src={imageUrl(tour.image_url)} alt={tour.name} />
           <div className="py-2">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">{tour.tour_type_label || tour.category || 'A Kenya experience'}</p>
             <h1 className="display-font mt-4 text-4xl leading-tight text-[#203b35] sm:text-5xl">{tour.name}</h1>
@@ -3983,7 +4018,7 @@ function OperatorPage({ currency }) {
   }, [slug]);
 
   useEffect(() => {
-    if (profile?.operator?.name) document.title = `${profile.operator.name} | Kenya Tours & Marketplace`;
+    if (profile?.operator?.name) document.title = `${profile.operator.name} | kenyaBook`;
   }, [profile]);
 
   const operator = profile?.operator;
@@ -4071,8 +4106,8 @@ function AuthPage({ register = false }) {
     <PageShell>
       <section className="mx-auto max-w-3xl px-5 py-12 sm:px-8 sm:py-20">
         <div className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-10">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">Kenya Tours</p>
-          <h1 className="display-font mt-3 text-4xl text-[#203b35]">{register ? 'Join the Kenya experience.' : 'Welcome back to Kenya Tours.'}</h1>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">kenyaBook</p>
+          <h1 className="display-font mt-3 text-4xl text-[#203b35]">{register ? 'Join the Kenya experience.' : 'Welcome back to kenyaBook.'}</h1>
           <p className="mt-3 text-[#52615b]">{register ? 'Create an account to plan and manage your bookings.' : 'Sign in to continue planning your Kenyan trip.'}</p>
           {error && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
           <form className="mt-7 space-y-5" action={register ? '/register' : '/login'} method="post">
@@ -4084,7 +4119,7 @@ function AuthPage({ register = false }) {
             <button className="min-h-12 w-full rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38]" type="submit">{register ? 'Create account' : 'Sign in'}</button>
           </form>
           <p className="mt-6 text-sm text-[#52615b]">
-            {register ? 'Already have an account?' : 'New to Kenya Tours?'}{' '}
+            {register ? 'Already have an account?' : 'New to kenyaBook?'}{' '}
             <a className="font-semibold text-[#9a5534] hover:underline" href={`${register ? '/login.html' : '/register.html'}${next ? `?next=${encodeURIComponent(next)}` : ''}`}>{register ? 'Sign in' : 'Create an account'}</a>
           </p>
           {!register && <p className="mt-4 text-sm"><a className="font-semibold text-[#9a5534] underline" href="/my-bookings">View or manage your bookings</a></p>}
@@ -4145,10 +4180,10 @@ function ConfirmationPage() {
       <section className="mx-auto max-w-3xl px-5 py-16 sm:px-8 sm:py-24">
         <div className="rounded-3xl border border-[#e9e5db] bg-white p-8 text-center shadow-sm sm:p-12">
           <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#e9eee8] text-2xl text-[#31554b]" aria-hidden="true">✓</span>
-          <h1 className="display-font mt-6 text-4xl text-[#203b35]">{paymentIsConfirmed ? 'Your booking is confirmed.' : 'Your request is in.'}</h1>
+          <h1 className="display-font mt-6 text-4xl text-[#203b35]">{paymentIsConfirmed ? 'Your Kenya trip is confirmed.' : 'Your request is in — one step to go.'}</h1>
           <p className="mt-4 leading-7 text-[#52615b]">
             {paymentIsConfirmed
-              ? 'Your M-Pesa payment has been verified. Thanks for booking with Kenya Tours.'
+              ? 'Your M-Pesa payment has been verified. Your trip is booked, and everything you need is right here.'
               : paymentFailed
                 ? 'The M-Pesa payment was not completed and this booking was not confirmed. You can try booking again.'
                 : 'We’ve received your request. Check your phone for the M-Pesa prompt and enter your PIN to pay. We’ll confirm your booking after Daraja verifies the payment.'}
@@ -4163,7 +4198,7 @@ function ConfirmationPage() {
           {emailStatus === 'unavailable' && <p className="mt-4 text-sm text-[#8a4c2e]" role="status">Your booking is saved. Email delivery is not configured right now; keep your booking reference for enquiries.</p>}
           {isManaged && <p className="mt-4 text-sm text-[#52615b]"><a className="font-semibold text-[#9a5534] underline" href="/my-bookings">View or manage this booking</a></p>}
           <div className="mt-8 rounded-2xl bg-[#f5f3ed] p-5 text-left">
-          <h2 className="font-semibold text-[#203b35]">And now?</h2>
+          <h2 className="font-semibold text-[#203b35]">What happens next</h2>
             <ul className="mt-3 list-inside list-disc space-y-2 text-sm leading-6 text-[#52615b]">
               <li>Approve the M-Pesa prompt on your phone, if you have not already.</li>
               <li>Daraja will securely notify us when payment completes.</li>
@@ -4300,6 +4335,9 @@ function CustomerBookingCard({ booking, csrfToken, onChanged }) {
         <span className="rounded-full bg-[#efeee7] px-3 py-1 text-sm font-semibold capitalize text-[#52615b]">{booking.status}</span>
       </div>
       <p className="mt-3 text-sm text-[#52615b]">Booking #{booking.id} · KSh {Number(booking.amount).toLocaleString(numberLocale())} · Payment: {booking.payment_status}</p>
+      {booking.subtotal_amount > 0 && (
+        <p className="mt-1 text-xs text-[#52615b]">Subtotal KSh {Number(booking.subtotal_amount).toLocaleString(numberLocale())} · Service fee ({Number(booking.guest_service_fee_rate || 0).toLocaleString(numberLocale())}%) KSh {Number(booking.service_fee_amount || 0).toLocaleString(numberLocale())} · Booking fee KSh {Number(booking.booking_fee_amount || 0).toLocaleString(numberLocale())}</p>
+      )}
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-800" role="alert">{error}</p>}
       {canChange && booking.schedule_id && <div className="mt-5 flex flex-wrap items-end gap-3">
         <label className="min-w-64 flex-1"><span className="field-label">Reschedule departure</span><select className="field" value={scheduleId} onChange={(event) => setScheduleId(event.target.value)}><option value="">Choose another available time</option>{schedules.map((slot) => <option key={slot.id} value={slot.id}>{slot.starts_at.replace('T', ' ')} · {slot.remaining} spaces</option>)}</select></label>
@@ -4562,7 +4600,7 @@ function MyBookingsPage() {
 
   return (
     <PageShell>
-      <PageBanner eyebrow="Your account" title="My account and bookings." description="View your account details, manage your trips and review the ones you have taken." />
+      <PageBanner eyebrow="Your account" title="Your trips, all in one place." description="View your account details, manage your trips and review the ones you have taken." />
       <section className="mx-auto max-w-5xl space-y-5 px-5 py-12 sm:px-8 sm:py-16">
         {loading && <p className="text-[#52615b]" role="status">Loading your bookings…</p>}
         {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800"><p role="alert">{error}</p><a className="mt-3 inline-block font-semibold underline" href="/login.html">Sign in as a customer</a></div>}
@@ -4584,7 +4622,7 @@ function MyBookingsPage() {
           <h2 className="display-font text-2xl text-[#203b35]">{pendingReviews === 1 ? 'One booking is waiting for your review.' : `${pendingReviews} bookings are waiting for your review.`}</h2>
           <p className="mt-2 text-sm text-[#52615b]">Rate each trip below so other travelers can book with confidence. Your review is published with your name.</p>
         </section>}
-        {!loading && !error && bookings.length === 0 && <div className="rounded-2xl bg-white p-7"><h2 className="display-font text-2xl text-[#203b35]">No bookings yet</h2><p className="mt-2 text-[#52615b]">When you book while signed in, your trips will appear here.</p><ButtonLink className="mt-5" href="/tours.html">Explore tours</ButtonLink></div>}
+        {!loading && !error && bookings.length === 0 && <div className="rounded-2xl bg-white p-7"><h2 className="display-font text-2xl text-[#203b35]">Your first Kenya trip is waiting to be booked.</h2><p className="mt-2 text-[#52615b]">Book a tour or a stay while signed in and it will appear here, ready to manage.</p><ButtonLink className="mt-5" href="/tours.html">Explore tours</ButtonLink></div>}
         {profile && bookings.map((booking) => <CustomerBookingCard key={booking.id} booking={booking} csrfToken={profile.csrf_token} onChanged={load} />)}
         {profile && bookings.length > 0 && <p className="rounded-2xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">We will keep reminding you here to rate each booking once the trip is over.</p>}
       </section>
@@ -4796,47 +4834,47 @@ export default function App() {
 
   useEffect(() => {
     const titles = {
-      '/': 'Kenya Tours & Marketplace | Tours and accommodations across Kenya',
-      '/index.html': 'Kenya Tours & Marketplace | Tours and accommodations across Kenya',
-      '/tours.html': 'Kenya tours and experiences | Kenya Tours & Marketplace',
-      '/properties.html': 'Hotels, lodges, resorts and vacation rentals in Kenya | Kenya Tours & Marketplace',
-      '/explore.html': 'Explore by category | Kenya Tours & Marketplace',
-      '/safari-operators.html': 'Licensed safari and tour operators in Kenya | Kenya Tours & Marketplace',
-      '/destinations.html': 'Kenya destinations by region | Kenya Tours & Marketplace',
-      '/blog.html': 'Travel guides for visiting Kenya | Kenya Tours & Marketplace',
-      '/gallery.html': 'Photo gallery of Kenya destinations | Kenya Tours & Marketplace',
-      '/reviews.html': 'Community reviews from guests | Kenya Tours & Marketplace',
-      '/compare.html': 'Compare tours and stays side by side | Kenya Tours & Marketplace',
-      '/wishlist.html': 'Your wishlist | Kenya Tours & Marketplace',
-      '/faq.html': 'Frequently asked questions | Kenya Tours & Marketplace',
-      '/how-it-works.html': 'How it works | Kenya Tours & Marketplace',
-      '/booking-guide.html': 'Booking guide | Kenya Tours & Marketplace',
-      '/cancellation-policy.html': 'Cancellation policy | Kenya Tours & Marketplace',
-      '/privacy-policy.html': 'Privacy policy | Kenya Tours & Marketplace',
-      '/terms.html': 'Terms & conditions | Kenya Tours & Marketplace',
-      '/services.html': 'Safari operators and travel services | Kenya Tours & Marketplace',
-      '/booking.html': 'Plan your Kenya trip | Kenya Tours & Marketplace',
-      '/about-kenya.html': 'Discover Kenya | Kenya Tours & Marketplace',
-      '/about-lamu.html': 'Discover Kenya | Kenya Tours & Marketplace',
-      '/contact.html': 'Contact us | Kenya Tours & Marketplace',
-      '/search.html': 'Search tours, accommodations and places | Kenya Tours & Marketplace',
-      '/login.html': 'Sign in | Kenya Tours & Marketplace',
-      '/register.html': 'Create an account | Kenya Tours & Marketplace',
-      '/tour-details.html': 'Tour details | Kenya Tours & Marketplace',
-      '/booking-confirmation.html': 'Booking request received | Kenya Tours & Marketplace',
-      '/my-bookings': 'My account | Kenya Tours & Marketplace',
-      '/admin/login': 'Admin sign in | Kenya Tours',
-      '/admin': 'Admin dashboard | Kenya Tours',
-      '/admin/dashboard': 'Admin dashboard | Kenya Tours',
-      '/dashboard': 'Bookings and messages | Kenya Tours',
-      '/vendor/login': 'Partner sign in | Kenya Tours',
-      '/vendor/register': 'Partner registration | Kenya Tours',
-      '/vendor/dashboard': 'Partner dashboard | Kenya Tours',
-      '/partner/login': 'Partner sign in | Kenya Tours',
-      '/partner/register': 'Partner registration | Kenya Tours',
-      '/partner/dashboard': 'Partner dashboard | Kenya Tours',
+      '/': 'kenyaBook | Tours and accommodations across Kenya',
+      '/index.html': 'kenyaBook | Tours and accommodations across Kenya',
+      '/tours.html': 'Kenya tours and experiences | kenyaBook',
+      '/properties.html': 'Hotels, lodges, resorts and vacation rentals in Kenya | kenyaBook',
+      '/explore.html': 'Explore by category | kenyaBook',
+      '/safari-operators.html': 'Licensed safari and tour operators in Kenya | kenyaBook',
+      '/destinations.html': 'Kenya destinations by region | kenyaBook',
+      '/blog.html': 'Travel guides for visiting Kenya | kenyaBook',
+      '/gallery.html': 'Photo gallery of Kenya destinations | kenyaBook',
+      '/reviews.html': 'Community reviews from guests | kenyaBook',
+      '/compare.html': 'Compare tours and stays side by side | kenyaBook',
+      '/wishlist.html': 'Your wishlist | kenyaBook',
+      '/faq.html': 'Frequently asked questions | kenyaBook',
+      '/how-it-works.html': 'How it works | kenyaBook',
+      '/booking-guide.html': 'Booking guide | kenyaBook',
+      '/cancellation-policy.html': 'Cancellation policy | kenyaBook',
+      '/privacy-policy.html': 'Privacy policy | kenyaBook',
+      '/terms.html': 'Terms & conditions | kenyaBook',
+      '/services.html': 'Safari operators and travel services | kenyaBook',
+      '/booking.html': 'Plan your Kenya trip | kenyaBook',
+      '/about-kenya.html': 'Discover Kenya | kenyaBook',
+      '/about-lamu.html': 'Discover Kenya | kenyaBook',
+      '/contact.html': 'Contact us | kenyaBook',
+      '/search.html': 'Search tours, accommodations and places | kenyaBook',
+      '/login.html': 'Sign in | kenyaBook',
+      '/register.html': 'Create an account | kenyaBook',
+      '/tour-details.html': 'Tour details | kenyaBook',
+      '/booking-confirmation.html': 'Booking request received | kenyaBook',
+      '/my-bookings': 'My account | kenyaBook',
+      '/admin/login': 'Admin sign in | kenyaBook',
+      '/admin': 'Admin dashboard | kenyaBook',
+      '/admin/dashboard': 'Admin dashboard | kenyaBook',
+      '/dashboard': 'Bookings and messages | kenyaBook',
+      '/vendor/login': 'Partner sign in | kenyaBook',
+      '/vendor/register': 'Partner registration | kenyaBook',
+      '/vendor/dashboard': 'Partner dashboard | kenyaBook',
+      '/partner/login': 'Partner sign in | kenyaBook',
+      '/partner/register': 'Partner registration | kenyaBook',
+      '/partner/dashboard': 'Partner dashboard | kenyaBook',
     };
-    document.title = titles[pathname] || 'Kenya Tours & Marketplace';
+    document.title = titles[pathname] || 'kenyaBook | Tours and accommodations across Kenya';
   }, [pathname]);
 
   if (pathname === '/admin/login') return <AdminLoginPage />;

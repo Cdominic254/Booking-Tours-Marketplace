@@ -1,6 +1,6 @@
-# Kenya Tours & Marketplace
+# kenyaBook
 
-Booking and tour-management website for Kenya-wide travel. Lamu is one of eight bookable destinations (alongside Mombasa, Diani, Watamu, Nairobi, Lake Naivasha, the Maasai Mara, and Amboseli) rather than the subject of the whole site. Flask provides the API and production server, while the React/Vite frontend is built into `frontend/dist` for deployment.
+Booking and tour-management website for Kenya-wide travel, trading as **kenyaBook** at [kenyabook.com](https://kenyabook.com). **SafariNaStay** is the official brand slogan and social media identity (`@safarinasstay` on Instagram, Facebook, X, TikTok and YouTube). Lamu is one of eight bookable destinations (alongside Mombasa, Diani, Watamu, Nairobi, Lake Naivasha, the Maasai Mara, and Amboseli) rather than the subject of the whole site. Flask provides the API and production server, while the React/Vite frontend is built into `frontend/dist` for deployment.
 
 ## Features
 

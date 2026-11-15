@@ -19,6 +19,8 @@ html {
   min-width: 320px;
   scroll-behavior: smooth;
   scroll-padding-top: 6rem;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 @media (min-width: 1150px) {
@@ -32,6 +34,11 @@ body {
   min-height: 100vh;
   margin: 0;
   line-height: 1.55;
+}
+
+/* The mobile menu is a sheet over the page, so the page behind it stops scrolling. */
+body.has-open-menu {
+  overflow: hidden;
 }
 
 button,
@@ -293,20 +300,15 @@ h3 {
 
 .site-brand__name {
   color: #203b35;
-  font-size: 0.98rem;
+  font-size: 0.95rem;
   white-space: nowrap;
 }
 
-@media (max-width: 399px) {
-  .site-brand__name {
-    display: none;
-  }
-}
-
+/* The one-word brand name fits every width, so it stays visible in the header. */
 .site-brand__tagline {
   display: none;
   color: #52718a;
-  font-size: 0.58rem;
+  font-size: 0.62rem;
 }
 
 @media (min-width: 480px) {
@@ -327,7 +329,7 @@ h3 {
   }
 
   .site-brand__tagline {
-    font-size: 0.62rem;
+    font-size: 0.66rem;
   }
 }
 
@@ -616,7 +618,9 @@ h3 {
   display: grid;
   gap: 0.3rem;
   max-height: calc(100vh - 4.5rem);
+  max-height: calc(100dvh - 4.5rem);
   overflow-y: auto;
+  overscroll-behavior: contain;
   border-bottom: 1px solid rgb(18 59 82 / 10%);
   background: #fbfaf6;
   padding: 0.85rem 1.1rem 1.15rem;
@@ -836,6 +840,13 @@ h3 {
   isolation: isolate;
   overflow: hidden;
   min-height: clamp(38rem, 88vh, 52rem);
+}
+
+/* Mobile browsers report a taller viewport than they show, so the hero sizes to the visible area. */
+@supports (min-height: 100svh) {
+  .hero-shell {
+    min-height: clamp(34rem, 88svh, 52rem);
+  }
 }
 
 .hero-shell::after {
@@ -1450,6 +1461,388 @@ a[href]:active {
 
 [class~="hover:bg-[#a45d38]"]:hover {
   background-color: #995033;
+}
+
+/* Mobile polish: comfortable tap targets, safe-area aware overlays, and thumb-sized controls. */
+.site-footer__links {
+  gap: 0.15rem;
+}
+
+.site-footer__links a {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+}
+
+@media (min-width: 640px) {
+  .site-footer__links {
+    gap: 0.75rem;
+  }
+
+  .site-footer__links a {
+    min-height: 0;
+  }
+}
+
+/* Overlays sit clear of the iOS home indicator and the browser toolbar. */
+.compare-tray {
+  bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Live chat: one thumb-friendly launcher that expands into a sheet on phones. */
+.live-chat-launcher {
+  position: fixed;
+  z-index: 50;
+  right: calc(1rem + env(safe-area-inset-right, 0px));
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  display: inline-flex;
+  min-height: 3.25rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-radius: 999px;
+  background: #203b35;
+  color: #fff;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 18px 35px -18px rgba(12, 34, 29, 0.85);
+  transition: transform 0.18s ease, background-color 0.18s ease;
+}
+
+.live-chat-launcher:hover {
+  background: #31554b;
+  transform: translateY(-2px);
+}
+
+.live-chat-launcher__icon {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.live-chat-launcher__close {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.live-chat-launcher__label {
+  display: none;
+}
+
+.live-chat-badge {
+  position: absolute;
+  top: -0.25rem;
+  right: -0.15rem;
+  display: grid;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.25rem;
+  place-items: center;
+  border-radius: 999px;
+  background: #d8552f;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.live-chat-panel {
+  position: fixed;
+  z-index: 70;
+  right: calc(0.75rem + env(safe-area-inset-right, 0px));
+  bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+  left: calc(0.75rem + env(safe-area-inset-left, 0px));
+  display: flex;
+  max-height: min(32rem, 72dvh);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #d9d3c4;
+  border-radius: 1.25rem;
+  background: #fff;
+  box-shadow: 0 28px 60px -25px rgba(15, 38, 33, 0.55);
+}
+
+.live-chat-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: #203b35;
+  color: #fff;
+}
+
+.live-chat-panel__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.live-chat-panel__subtitle {
+  margin-top: 0.15rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.72rem;
+}
+
+.live-chat-panel__close {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.live-chat-log {
+  display: flex;
+  min-height: 9rem;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.9rem 1rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: #fbfaf6;
+}
+
+.live-chat-welcome {
+  color: #52615b;
+  font-size: 0.85rem;
+}
+
+.live-chat-welcome__title {
+  color: #203b35;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.live-chat-welcome__text {
+  margin-top: 0.35rem;
+  line-height: 1.5;
+}
+
+.live-chat-quick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.live-chat-quick__item {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #dcd6c7;
+  border-radius: 0.75rem;
+  background: #fff;
+  color: #203b35;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-chat-quick__item:hover {
+  border-color: #a75f3a;
+  color: #9a5534;
+}
+
+.live-chat-bubble {
+  max-width: 88%;
+  padding: 0.55rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.live-chat-bubble--visitor {
+  align-self: flex-end;
+  border-bottom-right-radius: 0.3rem;
+  background: #203b35;
+  color: #fff;
+}
+
+.live-chat-bubble--staff {
+  align-self: flex-start;
+  border-bottom-left-radius: 0.3rem;
+  background: #f1ece1;
+  color: #24332f;
+}
+
+.live-chat-bubble__body {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.live-chat-bubble__meta {
+  margin-top: 0.3rem;
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+
+.live-chat-waiting {
+  align-self: flex-start;
+  color: #52615b;
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+.live-chat-error {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  background: #fdecea;
+  color: #a02a1a;
+  font-size: 0.75rem;
+}
+
+.live-chat-composer {
+  padding: 0.6rem 0.75rem 0.75rem;
+  border-top: 1px solid #ece7db;
+  background: #fff;
+}
+
+.live-chat-details {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+}
+
+.live-chat-details-toggle {
+  margin-bottom: 0.45rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #a75f3a;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.live-chat-composer__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+/* 16px keeps iOS from zooming the page when the keyboard opens. */
+.live-chat-input {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #d9d3c4;
+  border-radius: 0.7rem;
+  background: #fff;
+  color: #203b35;
+  font: inherit;
+  font-size: 1rem;
+}
+
+.live-chat-input:focus {
+  outline: 2px solid #a75f3a;
+  outline-offset: 1px;
+}
+
+.live-chat-input--message {
+  min-height: 3rem;
+  max-height: 7rem;
+  flex: 1 1 auto;
+  resize: none;
+}
+
+.live-chat-send {
+  display: inline-flex;
+  min-height: 2.75rem;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-radius: 0.8rem;
+  background: #a75f3a;
+  color: #fff;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.live-chat-send:hover {
+  background: #995033;
+}
+
+.live-chat-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.live-chat-send__icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.live-chat-whatsapp {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1rem 0.7rem;
+  border-top: 1px solid #ece7db;
+  color: #52615b;
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+
+.live-chat-whatsapp:hover {
+  color: #16833b;
+}
+
+.live-chat-whatsapp__icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  flex-shrink: 0;
+}
+
+@media (min-width: 640px) {
+  .compare-tray {
+    bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .live-chat-launcher {
+    right: calc(1.75rem + env(safe-area-inset-right, 0px));
+    bottom: calc(1.75rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .live-chat-panel {
+    right: calc(1.75rem + env(safe-area-inset-right, 0px));
+    bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+    left: auto;
+    width: 23rem;
+  }
+
+  .live-chat-input {
+    font-size: 0.85rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .live-chat-launcher__label {
+    display: inline;
+  }
+}
+
+/* Landscape phones are too short for a sheet anchored above the launcher, so it becomes a side panel. */
+@media (max-height: 520px) {
+  .live-chat-panel {
+    top: calc(0.75rem + env(safe-area-inset-top, 0px));
+    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    max-height: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

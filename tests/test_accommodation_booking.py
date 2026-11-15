@@ -539,7 +539,15 @@ def test_stay_booking_reserves_nights_and_prices_on_the_server(stay):
     assert response.status_code == 201
     booking = response.get_json()['booking']
 
-    assert booking['amount'] == 16000
+    # 16,000 subtotal + 1,440 service fee + 100 booking fee = 17,540 charged.
+    assert booking['subtotal_amount'] == 16000
+    assert booking['service_fee_amount'] == 1440
+    assert booking['booking_fee_amount'] == 100
+    assert booking['guest_service_fee_rate'] == 9
+    assert booking['amount'] == 17540
+    assert booking['host_commission_rate'] == 4
+    assert booking['host_commission_amount'] == 640
+    assert booking['host_payout_amount'] == 15360
     assert booking['booking_type'] == 'property'
     assert booking['property_id'] == stay['property']['id']
     assert booking['room_id'] == room['id']
@@ -557,7 +565,9 @@ def test_stay_booking_reserves_nights_and_prices_on_the_server(stay):
     with application.app.app_context():
         assert reserved_nights(room['id'], check_in, check_out) == {key: 1 for key in night_keys(check_in, check_out)}
         saved = application.db.session.get(application.Booking, booking['id'])
-        assert saved.commission_rate == float(application.get_admin_setting('commission_rate', 15))
+        assert saved.commission_rate == float(application.get_admin_setting('host_commission_rate', 4))
+        assert saved.subtotal_amount == 16000
+        assert saved.host_payout_amount == 15360
 
     customer_view = guest['client'].get('/api/customer/bookings').get_json()['bookings']
     row = next(item for item in customer_view if item['id'] == booking['id'])
@@ -681,7 +691,7 @@ def test_successful_callback_confirms_stay_and_keeps_nights(stay, monkeypatch):
     with application.app.app_context():
         booking = application.db.session.get(application.Booking, booking_data['id'])
         callback = _daraja_callback(booking, 0, {
-            'Amount': 16000,
+            'Amount': int(round(booking.amount)),
             'MpesaReceiptNumber': 'STAY123ABC',
             'PhoneNumber': 254712345678,
         })

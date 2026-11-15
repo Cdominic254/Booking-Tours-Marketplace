@@ -253,13 +253,13 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
     ));
     const total = itinerary.reduce((sum, item) => sum + item.tour.price * item.guests, 0);
     const message = isSwahili
-      ? ['Habari Kenya Tours, tafadhali thibitisheni mpango huu wa safari:', ...lines, `Jumla ya makadirio ya shughuli: ${formatPrice(total, language)}.`, 'Tafadhali thibitisheni nafasi na mtumie hatua salama za malipo ya M-Pesa.'].join('\n')
-      : ['Hello Kenya Tours, please help confirm this trip plan:', ...lines, `Estimated activities total: ${formatPrice(total, language)}.`, 'Please confirm availability and share the secure M-Pesa checkout steps.'].join('\n');
+      ? ['Habari kenyaBook, tafadhali thibitisheni mpango huu wa safari:', ...lines, `Jumla ya makadirio ya shughuli: ${formatPrice(total, language)}.`, 'Tafadhali thibitisheni nafasi na mtumie hatua salama za malipo ya M-Pesa.'].join('\n')
+      : ['Hello kenyaBook, please help confirm this trip plan:', ...lines, `Estimated activities total: ${formatPrice(total, language)}.`, 'Please confirm availability and share the secure M-Pesa checkout steps.'].join('\n');
     return whatsappUrl(message, whatsappPhone);
   }
 
   function dateEnquiryUrl() {
-    const message = `Hello Kenya Tours, please help arrange an experience for ${filters.guests} guests between ${filters.startDate}${filters.endDate ? ` and ${filters.endDate}` : ''}.`;
+    const message = `Hello kenyaBook, please help arrange an experience for ${filters.guests} guests between ${filters.startDate}${filters.endDate ? ` and ${filters.endDate}` : ''}.`;
     return whatsappUrl(message, whatsappPhone);
   }
 
@@ -394,7 +394,7 @@ export default function SmartTripPlanner({ tours, properties, destinations = [],
               <div className="border-t border-[#e9e5db] pt-4">
                 <p className="flex justify-between gap-3 text-sm text-[#52615b]"><span>Estimated activities total</span><strong className="text-[#203b35]">{formatPrice(itineraryTotal, language)}</strong></p>
                 <p className="mt-1 text-xs text-[#52615b]">Accommodation, transport, and final availability are not included.</p>
-                <a className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={quoteUrl()} target="_blank" rel="noreferrer">{whatsappPhone ? 'Message Kenya Tours on WhatsApp' : 'Share quote on WhatsApp'}</a>
+                <a className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={quoteUrl()} target="_blank" rel="noreferrer">{whatsappPhone ? 'Message kenyaBook on WhatsApp' : 'Share quote on WhatsApp'}</a>
               </div>
             </>
           )}

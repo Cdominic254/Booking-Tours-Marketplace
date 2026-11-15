@@ -210,7 +210,7 @@ export const SUPPORT_PAGES = [
       {
         heading: 'About the marketplace',
         paragraphs: [
-          'Kenya Tours & Marketplace is a booking platform. Tours, safaris, travel services and accommodation are delivered by independent licensed operators and hosts who list here; we handle discovery, booking and payment for the listings that are bookable online.',
+          'kenyaBook is a booking platform. Tours, safaris, travel services and accommodation are delivered by independent licensed operators and hosts who list here; we handle discovery, booking and payment for the listings that are bookable online.',
           'When you book, you enter into a contract with the operator or host for the experience itself, alongside these terms for the use of the platform.',
         ],
       },

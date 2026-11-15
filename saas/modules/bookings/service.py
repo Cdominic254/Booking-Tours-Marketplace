@@ -2,6 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from saas.extensions import db
+from saas.fees import GUEST_SERVICE_FEE_RATE, HOST_COMMISSION_RATE
 from saas.modules.bookings.models import Booking
 from saas.modules.catalog.models import Property, Tour, TourSchedule
 
@@ -87,6 +88,13 @@ def save_booking(booking):
         guests=int(booking['guests']),
         message=booking.get('message', ''),
         amount=float(booking.get('amount', 0) or 0),
+        subtotal_amount=float(booking.get('subtotal_amount', 0) or 0),
+        service_fee_amount=float(booking.get('service_fee_amount', 0) or 0),
+        booking_fee_amount=float(booking.get('booking_fee_amount', 0) or 0),
+        host_commission_amount=float(booking.get('host_commission_amount', 0) or 0),
+        host_payout_amount=float(booking.get('host_payout_amount', 0) or 0),
+        host_commission_rate=float(booking.get('host_commission_rate', HOST_COMMISSION_RATE) or 0),
+        guest_service_fee_rate=float(booking.get('guest_service_fee_rate', GUEST_SERVICE_FEE_RATE) or 0),
         commission_rate=float(booking.get('commission_rate', 15) or 15),
         traffic_source=booking.get('traffic_source', 'Unattributed'),
         payment_status=booking.get('payment_status', 'pending'),

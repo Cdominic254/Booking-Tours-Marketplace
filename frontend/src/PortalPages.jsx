@@ -94,10 +94,10 @@ function destinationOptions(destinations) {
 
 function PortalIdentity({ children }) {
   return (
-    <a className="brand-lockup flex items-center gap-3" href="/" aria-label={`Kenya Tours & Marketplace ${children}`}>
+    <a className="brand-lockup flex items-center gap-3" href="/" aria-label={`kenyaBook ${children}`}>
       <img className="brand-mark h-12 w-12" src="/logo.svg" alt="" />
       <span className="flex flex-col">
-        <span className="brand-name text-lg font-bold text-[#203b35] sm:text-xl">Kenya Tours & Marketplace</span>
+        <span className="brand-name text-lg font-bold text-[#203b35] sm:text-xl">kenyaBook</span>
         <span className="brand-tagline text-[0.6rem] font-bold uppercase tracking-[0.14em] text-[#52718a]">{children}</span>
       </span>
     </a>
@@ -185,6 +185,7 @@ export function VendorRegistrationPage() {
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#a75f3a]">Partner with us</p>
         <h1 className="display-font mt-3 text-4xl text-[#203b35]">Bring your Kenyan experience to more travelers.</h1>
         <p className="mt-3 text-[#52615b]">Safari operators, tour guides, transport providers and hosts: create a partner account to publish tours, services and stays, and keep your bookings in view.</p>
+        <p className="mt-2 text-sm text-[#52615b]">Tour and safari operators can also take a monthly subscription for a lower commission on every booking.</p>
         {error && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{error}</p>}
         <form className="mt-7 space-y-5" onSubmit={submitRegistration}>
           <label className="block"><span className="field-label">Your name or business name</span><input className="field" name="name" autoComplete="organization" required /></label>
@@ -853,6 +854,123 @@ function PropertyInventorySection({ properties, basePath, csrfToken }) {
   );
 }
 
+function VendorSubscriptionSection({ subscription, csrfToken, onRenewed }) {
+  const [phone, setPhone] = useState('');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [pendingReference, setPendingReference] = useState('');
+  const [busy, setBusy] = useState(false);
+  const active = Boolean(subscription?.is_active);
+  const eligible = Boolean(subscription?.eligible);
+  const standardRate = Number(subscription?.standard_host_commission_rate ?? 4);
+  const subscriberRate = Number(subscription?.subscriber_host_commission_rate ?? 2.5);
+  const monthlyFee = Number(subscription?.monthly_fee ?? 2500);
+  const payments = subscription?.payments || [];
+
+  // A confirmed STK payment lands a few seconds after the prompt, so poll the
+  // one payment we started instead of reloading the whole dashboard.
+  useEffect(() => {
+    if (!pendingReference) return undefined;
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await apiRequest(`/api/vendor/subscription/status/${encodeURIComponent(pendingReference)}`);
+        if (result.payment.status === 'paid') {
+          window.clearInterval(timer);
+          setPendingReference('');
+          setMessage('Subscription renewed. The lower commission now applies to new bookings.');
+          onRenewed?.();
+        } else if (result.payment.status === 'failed') {
+          window.clearInterval(timer);
+          setPendingReference('');
+          setError('That M-Pesa payment was not completed. Try again when you are ready.');
+        }
+      } catch {
+        // Keep waiting; the next tick retries the status check.
+      }
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [pendingReference]);
+
+  async function renew(event) {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    setBusy(true);
+    try {
+      const result = await apiRequest('/api/vendor/subscription/renew', {
+        method: 'POST',
+        data: { country_code: '+254', phone },
+        csrfToken,
+      });
+      if (result.payment_pending) {
+        // The prompt may or may not have arrived; the reference is the trail.
+        setMessage(result.message);
+      } else {
+        if (result.payment_reference) setPendingReference(result.payment_reference);
+        setMessage(result.message || 'Approve the M-Pesa prompt on your phone to renew.');
+      }
+    } catch (renewError) {
+      setError(messageFrom(renewError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SectionCard title="Monthly subscription" description={`Tour and safari operators on a paid monthly subscription pay ${formatNumber(subscriberRate)}% host commission instead of ${formatNumber(standardRate)}%.`}>
+      <Notice error>{error}</Notice><Notice>{message}</Notice>
+      {!eligible ? (
+        <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">Monthly subscriptions are open to tour and safari operators. Add a tour or safari business type to your profile to join.</p>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border border-[#e9e5db] bg-white p-4">
+              <p className="text-sm text-[#52615b]">Status</p>
+              <p className="mt-2 font-semibold text-[#203b35]">{active ? 'Active' : 'Not active'}</p>
+              <p className="mt-1 text-xs text-[#52615b]">{active && subscription?.renews_at ? `Paid until ${formatDate(subscription.renews_at)}` : 'Renew to unlock the lower commission.'}</p>
+            </div>
+            <div className="rounded-xl border border-[#e9e5db] bg-white p-4">
+              <p className="text-sm text-[#52615b]">Your host commission</p>
+              <p className="mt-2 font-semibold text-[#203b35]">{formatNumber(active ? subscriberRate : standardRate)}%</p>
+              <p className="mt-1 text-xs text-[#52615b]">Subscribers pay {formatNumber(subscriberRate)}%; the standard rate is {formatNumber(standardRate)}%.</p>
+            </div>
+            <div className="rounded-xl border border-[#e9e5db] bg-white p-4">
+              <p className="text-sm text-[#52615b]">Monthly price</p>
+              <p className="mt-2 font-semibold text-[#203b35]">KSh {formatNumber(monthlyFee)}</p>
+              <p className="mt-1 text-xs text-[#52615b]">Covers 30 days of bookings.</p>
+            </div>
+          </div>
+          <form className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end" onSubmit={renew}>
+            <label className="block">
+              <span className="field-label">M-Pesa phone for the KSh {formatNumber(monthlyFee)} payment</span>
+              <input className="field" inputMode="numeric" onChange={(event) => setPhone(event.target.value)} placeholder="712 345 678" required type="tel" value={phone} />
+            </label>
+            <button className="rounded-full bg-[#203b35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#31554b] disabled:opacity-60" disabled={busy || Boolean(pendingReference)} type="submit">
+              {pendingReference ? 'Waiting for M-Pesa…' : busy ? 'Sending request…' : active ? 'Renew for another 30 days' : 'Subscribe for 30 days'}
+            </button>
+          </form>
+          <p className="text-xs text-[#52615b]">Subscriptions are prepaid: each confirmed payment adds 30 days, and the lower commission applies to bookings taken while the subscription is live.</p>
+          {payments.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[480px] border-collapse text-left text-sm">
+                <thead><tr className="border-b border-[#e9e5db] text-[#52615b]">{['Started', 'Amount', 'Covers', 'Status'].map((label) => <th className="px-3 py-2 font-semibold" key={label}>{label}</th>)}</tr></thead>
+                <tbody>{payments.map((payment) => (
+                  <tr className="border-b border-[#f0ede6] text-[#52615b]" key={payment.id}>
+                    <td className="px-3 py-2">{formatDate(payment.paid_at || payment.created_at)}</td>
+                    <td className="px-3 py-2">KSh {formatNumber(payment.amount)}</td>
+                    <td className="px-3 py-2">{payment.period_start ? `${formatDate(payment.period_start)} – ${formatDate(payment.period_end)}` : '—'}</td>
+                    <td className="px-3 py-2 capitalize">{payment.status}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 function VendorBookingsSection({ csrfToken }) {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -925,7 +1043,10 @@ function VendorBookingsSection({ csrfToken }) {
                 </div>
                 <span className="rounded-full bg-[#efeee7] px-3 py-1 text-sm font-semibold capitalize text-[#52615b]">{booking.status.replaceAll('_', ' ')}</span>
               </div>
-              <p className="mt-2 text-xs text-[#52615b]">KSh {formatNumber(booking.amount)} · Payment: {booking.payment_status}</p>
+              <p className="mt-2 text-xs text-[#52615b]">Guest paid KSh {formatNumber(booking.amount)} · Payment: {booking.payment_status}</p>
+              {booking.subtotal_amount > 0 && (
+                <p className="mt-1 text-xs text-[#52615b]">Subtotal KSh {formatNumber(booking.subtotal_amount)} · Platform commission KSh {formatNumber(booking.host_commission_amount)} ({formatNumber(booking.host_commission_rate)}%) · Your payout KSh {formatNumber(booking.host_payout_amount)}</p>
+              )}
               <div className="mt-4 flex flex-wrap gap-2">
                 {(transitions[booking.status] || []).map((status) => (
                   <button className={`rounded-full px-4 py-2 text-sm font-semibold ${status === 'cancelled' ? 'border border-red-200 text-red-700' : 'bg-[#203b35] text-white hover:bg-[#31554b]'}`} key={status} type="button" onClick={() => updateStatus(booking, status)}>
@@ -1203,16 +1324,33 @@ function AdminUserManagement({ customers, vendors, onMutation }) {
   ];
 
   return (
-    <SectionCard title="User management" description="Review customer and operator accounts, and suspend or restore access without deleting booking history.">
+    <SectionCard title="User management" description="Review customer and operator accounts, suspend or restore access, and comp or end an operator's monthly subscription.">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-          <thead><tr className="border-b border-[#e9e5db] text-[#52615b]">{['Name', 'Email', 'Role', 'Bookings', 'Access'].map((label) => <th className="px-3 py-3 font-semibold" key={label}>{label}</th>)}</tr></thead>
+          <thead><tr className="border-b border-[#e9e5db] text-[#52615b]">{['Name', 'Email', 'Role', 'Bookings', 'Subscription', 'Access'].map((label) => <th className="px-3 py-3 font-semibold" key={label}>{label}</th>)}</tr></thead>
           <tbody>{accounts.map((account) => (
             <tr className="border-b border-[#f0ede6] text-[#52615b]" key={`${account.role}-${account.id}`}>
               <td className="px-3 py-3">{account.name}</td>
               <td className="px-3 py-3">{account.email}</td>
               <td className="px-3 py-3">{account.role === 'vendor' ? 'Partner' : 'Customer'}</td>
               <td className="px-3 py-3">{account.booking_count ?? '—'}</td>
+              <td className="px-3 py-3">
+                {account.role !== 'vendor' ? '—' : (
+                  <div className="space-y-1">
+                    <p className="text-sm">
+                      {account.subscription?.is_active
+                        ? `Active until ${formatDate(account.subscription.renews_at)}`
+                        : 'Not subscribed'}
+                    </p>
+                    {account.subscription?.is_tour_operator && (
+                      <div className="flex flex-wrap gap-3 text-xs font-semibold">
+                        <button className="text-[#26734d] hover:underline" type="button" onClick={() => onMutation(`/api/admin/vendors/${account.id}/subscription`, 'POST', { action: 'activate', months: 1 }, `${account.name}'s subscription activated for 30 days.`)}>Comp 30 days</button>
+                        {account.subscription?.is_active && <button className="text-red-700 hover:underline" type="button" onClick={() => onMutation(`/api/admin/vendors/${account.id}/subscription`, 'POST', { action: 'end' }, `${account.name}'s subscription ended.`)}>End</button>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </td>
               <td className="px-3 py-3">
                 <button
                   className={`font-semibold hover:underline ${account.is_active ? 'text-red-700' : 'text-[#26734d]'}`}
@@ -1278,6 +1416,9 @@ function AdminBookingCard({ booking, onMutation }) {
         <span className="rounded-full bg-[#efeee7] px-3 py-1 text-sm font-semibold capitalize text-[#52615b]">{booking.status.replaceAll('_', ' ')}</span>
       </div>
       <p className="mt-3 text-sm text-[#52615b]">KSh {formatNumber(booking.amount)} · Payment: {booking.payment_status} · Refund: {refundLabel}{booking.refund_status !== 'none' ? ` (KSh ${refundAmount})` : ''}</p>
+      {booking.subtotal_amount > 0 && (
+        <p className="mt-1 text-xs text-[#52615b]">Subtotal KSh {formatNumber(booking.subtotal_amount)} · Guest service fee KSh {formatNumber(booking.service_fee_amount)} ({formatNumber(booking.guest_service_fee_rate)}%) · Booking fee KSh {formatNumber(booking.booking_fee_amount)} · Host commission KSh {formatNumber(booking.host_commission_amount)} ({formatNumber(booking.host_commission_rate)}%) · Host payout KSh {formatNumber(booking.host_payout_amount)}</p>
+      )}
       {booking.refund_status !== 'none' && (booking.refund_reason || booking.refund_requested_at) && <p className="mt-1 text-xs text-[#52615b]">
         {booking.refund_reason}
         {booking.refund_requested_at ? ` · requested ${formatDate(booking.refund_requested_at)}` : ''}
@@ -1560,7 +1701,11 @@ function AdminOperationsSection() {
     setSettingsError('');
     const form = new FormData(event.currentTarget);
     const success = await mutate('/api/admin/settings', 'PUT', {
-      commission_rate: Number(form.get('commission_rate')),
+      host_commission_rate: Number(form.get('host_commission_rate')),
+      subscriber_host_commission_rate: Number(form.get('subscriber_host_commission_rate')),
+      guest_service_fee_rate: Number(form.get('guest_service_fee_rate')),
+      booking_fee: Number(form.get('booking_fee')),
+      subscription_monthly_fee: Number(form.get('subscription_monthly_fee')),
       refund_policy: 'automatic',
     }, 'Admin settings saved.');
     if (!success) setSettingsError('Settings could not be saved.');
@@ -1568,13 +1713,17 @@ function AdminOperationsSection() {
 
   return (
     <>
-      <SectionCard title="Commission & refund rules" description="Commission is captured on new bookings. Cancelling a paid booking at least 48 hours ahead refunds it in full; your team sends the money and marks it paid here.">
+      <SectionCard title="Commission & service fee rules" description="Split fee model: each booking subtotal is charged the host commission and a 9% guest service fee, plus a flat booking fee the guest pays at checkout. Tour and safari operators on a paid monthly subscription pay the lower subscriber commission. Rates are snapshotted on every new booking, so changing them never rewrites confirmed payouts.">
         <DashboardStatus error={error} message={message} />
         <Notice error>{settingsError}</Notice>
         {loading && !data && <p className="text-sm text-[#52615b]" role="status">Loading admin operations…</p>}
-        {data && <form className="grid gap-4 sm:grid-cols-[12rem_1fr_auto] sm:items-end" onSubmit={updateSettings}>
-          <label><span className="field-label">Commission rate (%)</span><input className="field" type="number" name="commission_rate" min="10" max="20" step="0.1" defaultValue={data.settings.commission_rate} required /></label>
-          <div className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">
+        {data && <form className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 sm:items-end" onSubmit={updateSettings}>
+          <label><span className="field-label">Host commission (%)</span><input className="field" type="number" name="host_commission_rate" min="0" max="25" step="0.1" defaultValue={data.settings.host_commission_rate} required /></label>
+          <label><span className="field-label">Subscriber commission (%)</span><input className="field" type="number" name="subscriber_host_commission_rate" min="0" max="25" step="0.1" defaultValue={data.settings.subscriber_host_commission_rate} required /></label>
+          <label><span className="field-label">Guest service fee (%)</span><input className="field" type="number" name="guest_service_fee_rate" min="0" max="25" step="0.1" defaultValue={data.settings.guest_service_fee_rate} required /></label>
+          <label><span className="field-label">Booking fee (KSh)</span><input className="field" type="number" name="booking_fee" min="0" max="5000" step="1" defaultValue={data.settings.booking_fee} required /></label>
+          <label><span className="field-label">Subscription (KSh / month)</span><input className="field" type="number" name="subscription_monthly_fee" min="0" max="50000" step="1" defaultValue={data.settings.subscription_monthly_fee} required /></label>
+          <div className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b] sm:col-span-2 lg:col-span-4">
             <strong className="block text-[#203b35]">Cancellation & refund policy</strong>
             Customer cancellation cutoff: {data.settings.cancellation_window_hours} hours before departure. Cancellations inside the cutoff are blocked. Full refunds are queued automatically for your team to send and mark as paid.
           </div>
@@ -1597,17 +1746,20 @@ function AdminOperationsSection() {
       </SectionCard>}
       {data && <AdminDisputes disputes={data.disputes} onMutation={mutate} />}
       {data && <SectionCard title="Booking & revenue analytics" description="Conversion and traffic cover the last 30 days. Occupancy uses tour departure capacity; property revenue includes verified payments only.">
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[
             ['All bookings', data.analytics.total_bookings],
             ['Paid revenue', `KSh ${formatNumber(data.analytics.paid_revenue)}`],
-            ['Commission earned', `KSh ${formatNumber(data.analytics.commission_earned)}`],
+            ['Platform fees earned', `KSh ${formatNumber(data.analytics.commission_earned)}`],
+            ['Host payouts due', `KSh ${formatNumber(data.analytics.host_payout_due)}`],
+            ['Active subscriptions', data.analytics.active_subscriptions],
+            ['Subscription revenue', `KSh ${formatNumber(data.analytics.subscription_revenue)}`],
           ].map(([label, value]) => <div className="rounded-xl bg-[#f5f3ed] p-4" key={label}><p className="text-sm text-[#52615b]">{label}</p><p className="display-font mt-2 text-2xl text-[#203b35]">{value}</p></div>)}
         </div>
         <div className="mt-5 space-y-3">
           {data.analytics.by_tour.map((tour) => <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#f0ede6] py-3 text-sm" key={tour.tour}>
             <div><p className="font-semibold text-[#203b35]">{tour.tour_name}</p><p className="text-[#52615b]">{tour.bookings} booking{tour.bookings === 1 ? '' : 's'}</p></div>
-            <div className="text-right text-[#52615b]"><p>KSh {formatNumber(tour.paid_revenue)} paid</p><p>KSh {formatNumber(tour.commission_earned)} commission</p></div>
+            <div className="text-right text-[#52615b]"><p>KSh {formatNumber(tour.paid_revenue)} paid</p><p>KSh {formatNumber(tour.commission_earned)} platform fees</p><p>KSh {formatNumber(tour.host_payout)} host payout</p></div>
           </div>)}
           {data.analytics.by_tour.length === 0 && <p className="text-sm text-[#52615b]">Analytics will appear when bookings are received.</p>}
         </div>
@@ -1637,6 +1789,220 @@ function ActivityTable({ title, columns, rows, emptyMessage }) {
   );
 }
 
+function LiveChatInbox() {
+  const [inbox, setInbox] = useState({ conversations: [], open_count: 0, unread_count: 0, csrf_token: '' });
+  const [filter, setFilter] = useState('open');
+  const [selectedId, setSelectedId] = useState(null);
+  const [thread, setThread] = useState(null);
+  const [reply, setReply] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadInbox() {
+      try {
+        const result = await apiRequest(`/api/admin/chat?status=${filter}`);
+        if (active) setInbox(result);
+      } catch (loadError) {
+        if (active) setError(messageFrom(loadError));
+      }
+    }
+
+    loadInbox();
+    const interval = window.setInterval(loadInbox, 10000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [filter]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setThread(null);
+      return undefined;
+    }
+
+    let active = true;
+    async function loadThread() {
+      try {
+        const result = await apiRequest(`/api/admin/chat/${selectedId}`);
+        if (!active) return;
+        setThread(result);
+        setError('');
+      } catch (loadError) {
+        if (active) setError(messageFrom(loadError));
+      }
+    }
+
+    loadThread();
+    const interval = window.setInterval(loadThread, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [selectedId]);
+
+  async function refreshThread() {
+    const result = await apiRequest(`/api/admin/chat/${selectedId}`);
+    setThread(result);
+  }
+
+  async function sendReply(event) {
+    event.preventDefault();
+    const body = reply.trim();
+    if (!body || !selectedId || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await apiRequest(`/api/admin/chat/${selectedId}`, {
+        method: 'POST',
+        data: { body },
+        csrfToken: inbox.csrf_token,
+      });
+      setReply('');
+      await refreshThread();
+    } catch (sendError) {
+      setError(messageFrom(sendError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeStatus(action) {
+    if (!selectedId || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await apiRequest(`/api/admin/chat/${selectedId}`, {
+        method: 'POST',
+        data: { action },
+        csrfToken: inbox.csrf_token,
+      });
+      await refreshThread();
+    } catch (statusError) {
+      setError(messageFrom(statusError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const conversation = thread?.conversation;
+
+  return (
+    <SectionCard title="Live chat" description="Messages guests send from the chat button on the public site. New conversations appear here within a few seconds.">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="inline-flex items-center gap-2 rounded-full bg-[#e9f4ee] px-3 py-1 text-xs font-semibold text-[#177b5b]">
+          <span className="h-2 w-2 rounded-full bg-[#177b5b]" />
+          Live
+        </span>
+        <span className="text-xs text-[#52615b]">{inbox.unread_count} unread · {inbox.open_count} open</span>
+        <div className="ml-auto flex gap-1 rounded-full bg-[#f5f3ed] p-1">
+          {[['open', 'Open'], ['closed', 'Closed'], ['all', 'All']].map(([value, label]) => (
+            <button
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${filter === value ? 'bg-white text-[#203b35] shadow-sm' : 'text-[#52615b] hover:text-[#203b35]'}`}
+              key={value}
+              onClick={() => setFilter(value)}
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error && <p className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-800" role="alert">{error}</p>}
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-[19rem_1fr]">
+        <div className={selectedId ? 'hidden lg:block' : ''}>
+          <ul className="space-y-2">
+            {inbox.conversations.map((item) => (
+              <li key={item.id}>
+                <button
+                  className={`w-full rounded-xl border p-3 text-left transition ${selectedId === item.id ? 'border-[#a75f3a] bg-[#fdf7f2]' : 'border-[#e9e5db] bg-white hover:border-[#d9d3c4]'}`}
+                  onClick={() => { setSelectedId(item.id); setReply(''); }}
+                  type="button"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-sm font-semibold text-[#203b35]">{item.name || 'Guest visitor'}</p>
+                    {item.staff_unread > 0 && <span className="rounded-full bg-[#d8552f] px-1.5 py-0.5 text-[10px] font-bold text-white">{item.staff_unread}</span>}
+                  </div>
+                  <p className="mt-1 truncate text-xs text-[#52615b]">
+                    {item.preview_sender === 'staff' ? 'You: ' : ''}{item.preview || 'No messages yet'}
+                  </p>
+                  <p className="mt-1 text-[10px] uppercase tracking-wider text-[#8b9a94]">{item.status} · {displayTimestamp(item.updated_at)}</p>
+                </button>
+              </li>
+            ))}
+            {inbox.conversations.length === 0 && (
+              <li className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">
+                No {filter === 'closed' ? 'closed' : filter === 'open' ? 'open' : ''} conversations yet.
+              </li>
+            )}
+          </ul>
+        </div>
+
+        <div className={selectedId ? '' : 'hidden lg:block'}>
+          {conversation ? (
+            <>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-[#203b35]">{conversation.name || 'Guest visitor'}</p>
+                  <p className="text-xs text-[#52615b]">
+                    {conversation.email || 'No email given'} · started on {conversation.page || 'the site'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="rounded-full border border-[#d9d3c4] px-3 py-1.5 text-xs font-semibold text-[#52615b] hover:text-[#203b35] lg:hidden" onClick={() => setSelectedId(null)} type="button">
+                    All chats
+                  </button>
+                  <button
+                    className="rounded-full border border-[#d9d3c4] px-3 py-1.5 text-xs font-semibold text-[#52615b] hover:text-[#203b35] disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => changeStatus(conversation.status === 'open' ? 'close' : 'reopen')}
+                    type="button"
+                  >
+                    {conversation.status === 'open' ? 'Close conversation' : 'Reopen conversation'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 max-h-[22rem] space-y-2 overflow-y-auto rounded-xl bg-[#fbfaf6] p-3">
+                {(thread.messages || []).map((message) => (
+                  <div className={message.sender === 'staff' ? 'ml-auto max-w-[85%] rounded-xl bg-[#203b35] p-2.5 text-sm text-white' : 'max-w-[85%] rounded-xl bg-[#f1ece1] p-2.5 text-sm text-[#24332f]'} key={message.id}>
+                    <p className="whitespace-pre-wrap break-words">{message.body}</p>
+                    <p className="mt-1 text-[10px] opacity-70">{message.sender === 'staff' ? message.author || 'Support' : conversation.name || 'Visitor'} · {displayTimestamp(message.created_at)}</p>
+                  </div>
+                ))}
+                {(thread.messages || []).length === 0 && <p className="text-sm text-[#52615b]">No messages in this conversation.</p>}
+              </div>
+
+              <form className="mt-3 flex items-end gap-2" onSubmit={sendReply}>
+                <textarea
+                  aria-label="Reply to the guest"
+                  className="w-full resize-none rounded-xl border border-[#d9d3c4] p-3 text-base text-[#203b35] sm:text-sm"
+                  maxLength={2000}
+                  onChange={(event) => setReply(event.target.value)}
+                  placeholder="Reply to the guest…"
+                  rows={2}
+                  value={reply}
+                />
+                <button className="shrink-0 rounded-full bg-[#203b35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#31554b] disabled:opacity-60" disabled={busy || !reply.trim()} type="submit">Send reply</button>
+              </form>
+            </>
+          ) : selectedId ? (
+            <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">Loading conversation…</p>
+          ) : (
+            <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">Select a conversation to read it and reply.</p>
+          )}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+
 export function AdminActivityDashboardPage() {
   const { data, loading, error, load } = usePortalData('/api/admin/dashboard');
   const [signOutError, setSignOutError] = useState('');
@@ -1653,6 +2019,7 @@ export function AdminActivityDashboardPage() {
   return (
     <DashboardLayout role="Admin" actor="Bookings and messages" signOut={signOut}>
       <DashboardStatus error={error || signOutError} />
+      <LiveChatInbox />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[#52615b]">A clear view of the latest guest enquiries and tour booking activity across Kenya.</p>
         <a className="font-semibold text-[#9a5534] hover:underline" href="/admin">Catalog and accounts →</a>
@@ -1713,11 +2080,11 @@ export function AdminDashboardPage() {
   const partnerName = (item) => data.vendors.find((vendor) => vendor.id === item.vendor_id)?.name || 'Partner';
   const vendorOwner = (item) => item.vendor_id
     ? `Partner listing · ${partnerName(item)}`
-    : 'Managed by Kenya Tours';
+    : 'Managed by kenyaBook';
   const hostOwner = (item) => item.vendor_id
     ? `Host · ${partnerName(item)}`
-    : 'Managed by Kenya Tours';
-  const serviceOwner = (item) => item.vendor_name ? `Partner listing · ${item.vendor_name}` : 'Managed by Kenya Tours';
+    : 'Managed by kenyaBook';
+  const serviceOwner = (item) => item.vendor_name ? `Partner listing · ${item.vendor_name}` : 'Managed by kenyaBook';
 
   return (
     <DashboardLayout role="Admin" actor="Catalog management" signOut={signOut}>
@@ -1770,6 +2137,7 @@ export function VendorDashboardPage() {
           ['Your properties', data.properties.length],
         ].map(([label, count]) => <div className="rounded-2xl border border-[#e9e5db] bg-white p-5" key={label}><p className="text-sm text-[#52615b]">{label}</p><p className="display-font mt-2 text-3xl text-[#203b35]">{count}</p></div>)}
       </div>}
+      {data && <VendorSubscriptionSection subscription={data.subscription} csrfToken={data.csrf_token} onRenewed={load} />}
       {data && <VendorProfileSection vendor={data.vendor} onMutation={mutate} csrfToken={data.csrf_token} />}
       {data && <CatalogSection title="Tours" items={data.tours} fields={tourFields(data.destinations)} basePath="/api/vendor/tours" onMutation={mutate} csrfToken={data.csrf_token} />}
       {data && <AvailabilitySection tours={data.tours} endpoint="/api/vendor/availability" csrfToken={data.csrf_token} />}

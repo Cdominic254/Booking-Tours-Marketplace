@@ -235,6 +235,43 @@ def test_catalogue_exposes_demand_price_and_ratings(client, discovery_scene):
     assert 'price_comparison' in stay
 
 
+def test_catalogue_exposes_branded_social_profiles_by_default(client, monkeypatch):
+    for name in (
+        'SOCIAL_INSTAGRAM_URL',
+        'SOCIAL_FACEBOOK_URL',
+        'SOCIAL_X_URL',
+        'SOCIAL_TIKTOK_URL',
+        'SOCIAL_YOUTUBE_URL',
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    payload = client.get('/api/catalogue').get_json()
+
+    assert [link['href'] for link in payload['social_links']] == [
+        'https://www.instagram.com/safarinasstay/',
+        'https://www.facebook.com/safarinasstay',
+        'https://x.com/safarinasstay',
+        'https://www.tiktok.com/@safarinasstay',
+        'https://www.youtube.com/@safarinasstay',
+    ]
+
+
+def test_social_profile_links_allow_overrides_and_hidden_networks(monkeypatch):
+    monkeypatch.setenv('SOCIAL_INSTAGRAM_URL', 'https://www.instagram.com/example-studio/')
+    monkeypatch.setenv('SOCIAL_FACEBOOK_URL', 'off')
+    for name in ('SOCIAL_X_URL', 'SOCIAL_TIKTOK_URL', 'SOCIAL_YOUTUBE_URL'):
+        monkeypatch.delenv(name, raising=False)
+
+    links = application.social_profile_links()
+
+    assert links[0] == {
+        'label': 'Instagram',
+        'href': 'https://www.instagram.com/example-studio/',
+        'icon': 'instagram',
+    }
+    assert [link['label'] for link in links] == ['Instagram', 'X', 'TikTok', 'YouTube']
+
+
 def test_catalogue_flags_underpriced_listing_as_best_value(client, discovery_scene):
     slugs = discovery_scene['slugs']
 

@@ -31,6 +31,14 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 from saas.extensions import db
+from saas.fees import (
+    BOOKING_FEE,
+    GUEST_SERVICE_FEE_RATE,
+    HOST_COMMISSION_RATE,
+    SUBSCRIBER_HOST_COMMISSION_RATE,
+    SUBSCRIPTION_MONTHLY_FEE,
+    split_fee_quote,
+)
 from saas.modules.analytics.models import AnalyticsEvent
 from saas.modules.bookings.models import Booking, BookingDispute
 from saas.modules.bookings.daraja import (
@@ -59,6 +67,7 @@ from saas.modules.catalog.availability import (
     stay_option,
     update_availability_range,
 )
+from saas.brand import BRAND_DOMAIN, BRAND_NAME, BRAND_SOCIAL_HANDLE
 from saas.modules.catalog.models import (
     Destination,
     Property,
@@ -82,8 +91,9 @@ from saas.modules.identity.models import (
     SavedItem,
     User,
     VendorAccount,
+    VendorSubscriptionPayment,
 )
-from saas.modules.messaging.models import NewsletterSubscriber, Submission
+from saas.modules.messaging.models import ChatConversation, ChatMessage, NewsletterSubscriber, Submission
 
 load_dotenv()
 
@@ -96,18 +106,23 @@ EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
 EMAIL_USERNAME = os.environ.get('EMAIL_USERNAME', '')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
 EMAIL_FROM = os.environ.get('EMAIL_FROM', EMAIL_USERNAME)
-EMAIL_TO = os.environ.get('EMAIL_TO', 'info@lamutours.com')
+EMAIL_TO = os.environ.get('EMAIL_TO', f'info@{BRAND_DOMAIN}')
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').lower() in ('1', 'true', 'yes')
 EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').lower() in ('1', 'true', 'yes')
 whatsapp_phone = re.sub(r'\D', '', os.environ.get('WHATSAPP_BUSINESS_PHONE', ''))
 WHATSAPP_BUSINESS_PHONE = whatsapp_phone if 8 <= len(whatsapp_phone) <= 15 else ''
-SITE_URL = os.environ.get('SITE_URL', 'https://lamutours.2bd.net').strip().rstrip('/')
+SITE_URL = os.environ.get('SITE_URL', f'https://{BRAND_DOMAIN}').strip().rstrip('/')
+# One prepaid month of a partner subscription.
+VENDOR_SUBSCRIPTION_PERIOD = timedelta(days=30)
+# A blank setting falls back to the brand's official @safarinasstay profile so the
+# footer and share rows always link to the branded identity. Set any SOCIAL_*
+# variable to a non-URL value (for example "off") to hide that network.
 SOCIAL_PROFILE_SETTINGS = (
-    ('Instagram', 'SOCIAL_INSTAGRAM_URL', 'instagram'),
-    ('Facebook', 'SOCIAL_FACEBOOK_URL', 'facebook'),
-    ('X', 'SOCIAL_X_URL', 'x'),
-    ('TikTok', 'SOCIAL_TIKTOK_URL', 'tiktok'),
-    ('YouTube', 'SOCIAL_YOUTUBE_URL', 'youtube'),
+    ('Instagram', 'SOCIAL_INSTAGRAM_URL', 'instagram', f'https://www.instagram.com/{BRAND_SOCIAL_HANDLE}/'),
+    ('Facebook', 'SOCIAL_FACEBOOK_URL', 'facebook', f'https://www.facebook.com/{BRAND_SOCIAL_HANDLE}'),
+    ('X', 'SOCIAL_X_URL', 'x', f'https://x.com/{BRAND_SOCIAL_HANDLE}'),
+    ('TikTok', 'SOCIAL_TIKTOK_URL', 'tiktok', f'https://www.tiktok.com/@{BRAND_SOCIAL_HANDLE}'),
+    ('YouTube', 'SOCIAL_YOUTUBE_URL', 'youtube', f'https://www.youtube.com/@{BRAND_SOCIAL_HANDLE}'),
 )
 IS_VERCEL = os.environ.get('VERCEL') == '1'
 IS_PRODUCTION = (
@@ -118,10 +133,10 @@ IS_PRODUCTION = (
 
 
 def social_profile_links():
-    """Public social profiles, configured through the SOCIAL_* environment variables."""
+    """Public social profiles, defaulting to the brand's official social identity."""
     links = []
-    for label, setting, icon in SOCIAL_PROFILE_SETTINGS:
-        href = (os.environ.get(setting) or '').strip()
+    for label, setting, icon, default_href in SOCIAL_PROFILE_SETTINGS:
+        href = (os.environ.get(setting) or '').strip() or default_href
         if href.startswith(('https://', 'http://')):
             links.append({'label': label, 'href': href, 'icon': icon})
     return links
@@ -197,7 +212,7 @@ def resolve_session_secret_key():
             'SECRET_KEY is not set; session signatures are derived from DATABASE_URL. '
             'Set SECRET_KEY to a long random value and invalidate existing sessions.'
         )
-        return hashlib.sha256(f'lamu-tours-session|{database_url}'.encode('utf-8')).hexdigest()
+        return hashlib.sha256(f'{BRAND_DOMAIN}-session|{database_url}'.encode('utf-8')).hexdigest()
     warn_deployment_config(
         'SECRET_KEY is not set and no PostgreSQL DATABASE_URL is available, so an '
         'ephemeral key is generated. Sessions, CSRF tokens, and login cookies will not '
@@ -272,6 +287,21 @@ def ensure_booking_payment_columns():
             connection.execute(text("ALTER TABLE booking ADD COLUMN status VARCHAR(30) NOT NULL DEFAULT 'requested'"))
         if 'commission_rate' not in booking_columns:
             connection.execute(text('ALTER TABLE booking ADD COLUMN commission_rate FLOAT NOT NULL DEFAULT 15.0'))
+        if 'subtotal_amount' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN subtotal_amount FLOAT NOT NULL DEFAULT 0.0'))
+            connection.execute(text('ALTER TABLE booking ADD COLUMN service_fee_amount FLOAT NOT NULL DEFAULT 0.0'))
+            connection.execute(text('ALTER TABLE booking ADD COLUMN host_commission_amount FLOAT NOT NULL DEFAULT 0.0'))
+            connection.execute(text('ALTER TABLE booking ADD COLUMN host_payout_amount FLOAT NOT NULL DEFAULT 0.0'))
+            connection.execute(text('ALTER TABLE booking ADD COLUMN host_commission_rate FLOAT NOT NULL DEFAULT 4.0'))
+            connection.execute(text('ALTER TABLE booking ADD COLUMN guest_service_fee_rate FLOAT NOT NULL DEFAULT 9.0'))
+            # Bookings taken before the split fee model charged no platform fees,
+            # so their full amount is treated as the host's own subtotal.
+            connection.execute(text(
+                'UPDATE booking SET subtotal_amount = amount, host_payout_amount = amount'
+            ))
+        if 'booking_fee_amount' not in booking_columns:
+            # The flat guest booking fee arrived after the split fee model.
+            connection.execute(text('ALTER TABLE booking ADD COLUMN booking_fee_amount FLOAT NOT NULL DEFAULT 0.0'))
         if 'refund_status' not in booking_columns:
             connection.execute(text("ALTER TABLE booking ADD COLUMN refund_status VARCHAR(30) NOT NULL DEFAULT 'none'"))
         if 'booking_type' not in booking_columns:
@@ -324,6 +354,11 @@ def ensure_operator_columns():
             'phone': "VARCHAR(50) NOT NULL DEFAULT ''",
             'website': "VARCHAR(255) NOT NULL DEFAULT ''",
             'logo_url': 'VARCHAR(500)',
+            'subscription_status': "VARCHAR(20) NOT NULL DEFAULT 'inactive'",
+            'subscription_plan': "VARCHAR(40) NOT NULL DEFAULT ''",
+            'subscription_started_at': 'TIMESTAMP',
+            'subscription_renews_at': 'TIMESTAMP',
+            'subscription_monthly_fee': 'FLOAT NOT NULL DEFAULT 0.0',
         }.items():
             if column not in vendor_columns:
                 connection.execute(text(f'ALTER TABLE vendor_account ADD COLUMN {column} {declaration}'))
@@ -390,7 +425,11 @@ def ensure_refund_columns():
 def ensure_admin_settings():
     changed = False
     for key, value in {
-        'commission_rate': '15',
+        'host_commission_rate': f'{HOST_COMMISSION_RATE:g}',
+        'subscriber_host_commission_rate': f'{SUBSCRIBER_HOST_COMMISSION_RATE:g}',
+        'guest_service_fee_rate': f'{GUEST_SERVICE_FEE_RATE:g}',
+        'booking_fee': f'{BOOKING_FEE:g}',
+        'subscription_monthly_fee': f'{SUBSCRIPTION_MONTHLY_FEE:g}',
         'refund_policy': 'automatic',
         'cancellation_window_hours': '48',
     }.items():
@@ -409,6 +448,73 @@ def ensure_admin_settings():
 def get_admin_setting(key, default):
     setting = db.session.get(AdminSetting, key)
     return setting.value if setting else str(default)
+
+
+def platform_fee_rates():
+    """Host commission and guest service fee rates, as percentages."""
+    try:
+        host_rate = float(get_admin_setting('host_commission_rate', HOST_COMMISSION_RATE))
+        guest_rate = float(get_admin_setting('guest_service_fee_rate', GUEST_SERVICE_FEE_RATE))
+    except (TypeError, ValueError):
+        return HOST_COMMISSION_RATE, GUEST_SERVICE_FEE_RATE
+    if not (0 <= host_rate < 100 and 0 <= guest_rate < 100):
+        return HOST_COMMISSION_RATE, GUEST_SERVICE_FEE_RATE
+    return host_rate, guest_rate
+
+
+def platform_booking_fee():
+    """Flat guest booking fee, in Kenyan shillings, charged on every booking."""
+    try:
+        fee = float(get_admin_setting('booking_fee', BOOKING_FEE))
+    except (TypeError, ValueError):
+        return BOOKING_FEE
+    if not (0 <= fee <= 5000):
+        return BOOKING_FEE
+    return fee
+
+
+def booking_fee_quote(subtotal, vendor_id=None):
+    """Split a listing subtotal using the marketplace's current fee policy.
+
+    A tour or safari operator with a live monthly subscription is charged the
+    subscriber commission instead of the standard host commission.
+    """
+    host_rate, guest_rate = platform_fee_rates()
+    if vendor_has_operator_subscription(vendor_id):
+        host_rate = platform_subscriber_rate()
+    return split_fee_quote(subtotal, host_rate, guest_rate, platform_booking_fee())
+
+
+def platform_subscriber_rate():
+    """Host commission, as a percentage, charged to subscribed operators."""
+    try:
+        rate = float(get_admin_setting(
+            'subscriber_host_commission_rate', SUBSCRIBER_HOST_COMMISSION_RATE
+        ))
+    except (TypeError, ValueError):
+        return SUBSCRIBER_HOST_COMMISSION_RATE
+    if not (0 <= rate < 100):
+        return SUBSCRIBER_HOST_COMMISSION_RATE
+    return rate
+
+
+def platform_subscription_fee():
+    """Monthly partner subscription price, in Kenyan shillings."""
+    try:
+        fee = float(get_admin_setting('subscription_monthly_fee', SUBSCRIPTION_MONTHLY_FEE))
+    except (TypeError, ValueError):
+        return SUBSCRIPTION_MONTHLY_FEE
+    if not (0 <= fee <= 50000):
+        return SUBSCRIPTION_MONTHLY_FEE
+    return fee
+
+
+def vendor_has_operator_subscription(vendor_id):
+    """True when the listing owner is a subscribed tour or safari operator."""
+    if not vendor_id:
+        return False
+    vendor = db.session.get(VendorAccount, vendor_id)
+    return bool(vendor and vendor.is_tour_operator() and vendor.subscription_is_active())
 
 
 def ensure_catalog_columns():
@@ -876,10 +982,11 @@ PROMOTION_MAX_ACTIVE = 6
 # Placeholder pickup points written by older seeds; matched so they can be
 # upgraded to the operator-specific value in DEFAULT_TOUR_DETAILS.
 LEGACY_PICKUP_POINTS = ('Lamu Town waterfront', 'Confirm with your operator')
-# Owner name written by older seeds; upgraded to DEFAULT_OWNER_NAME.
-LEGACY_OWNER_NAMES = ('Lamu Tours',)
-DEFAULT_OWNER_NAME = 'Kenya Tours'
-DEFAULT_OWNER_EMAIL = 'admin@lamutours.com'
+# Owner details written by older seeds; upgraded to the current brand on boot.
+LEGACY_OWNER_NAMES = ('Lamu Tours', 'Kenya Tours')
+LEGACY_OWNER_EMAILS = ('admin@lamutours.com',)
+DEFAULT_OWNER_NAME = BRAND_NAME
+DEFAULT_OWNER_EMAIL = f'admin@{BRAND_DOMAIN}'
 
 # Neighbourhood-level rows from the earlier Lamu-only seed. They are replaced by
 # the country-wide destinations above; Destination.slug is not referenced by any
@@ -966,10 +1073,11 @@ def seed_catalogue():
             if not listing.destination:
                 listing.destination = destination
                 changed = True
-            if listing.owner_name in LEGACY_OWNER_NAMES and listing.owner_email == DEFAULT_OWNER_EMAIL:
-                # Seeded rows still carry the pre-rebrand owner name; a vendor-owned
+            if listing.owner_name in LEGACY_OWNER_NAMES and listing.owner_email in LEGACY_OWNER_EMAILS:
+                # Seeded rows still carry pre-rebrand owner details; a vendor-owned
                 # listing never uses the placeholder email, so it is left alone.
                 listing.owner_name = DEFAULT_OWNER_NAME
+                listing.owner_email = DEFAULT_OWNER_EMAIL
                 changed = True
 
     for slug, name, description, duration, price, image_url, destination, category, days in DEFAULT_PACKAGE_TOURS:
@@ -1663,17 +1771,30 @@ def process_daraja_callback(payload):
         return 'Invalid callback result', 400
 
     booking = Booking.query.filter_by(checkout_request_id=checkout_request_id).first()
-    if not booking or booking.merchant_request_id != merchant_request_id:
-        app.logger.warning('Ignoring unmatched Daraja callback.')
-        return '', 204
-    if booking.payment_status != 'pending':
-        return '', 204
+    if booking and booking.merchant_request_id == merchant_request_id:
+        return _process_booking_daraja_callback(
+            booking, stk_callback, checkout_request_id, callback_result_code
+        )
 
+    payment = VendorSubscriptionPayment.query.filter_by(
+        checkout_request_id=checkout_request_id
+    ).first()
+    if payment and payment.merchant_request_id == merchant_request_id:
+        return _process_subscription_daraja_callback(
+            payment, stk_callback, checkout_request_id, callback_result_code
+        )
+
+    app.logger.warning('Ignoring unmatched Daraja callback.')
+    return '', 204
+
+
+def _verified_daraja_result(checkout_request_id, callback_result_code, context):
+    """Confirm a callback against Daraja's own record of the payment."""
     try:
         query_result = query_stk_push(checkout_request_id)
     except DarajaError:
-        app.logger.exception('Could not verify Daraja callback for booking %s.', booking.id)
-        return 'Payment verification temporarily unavailable', 503
+        app.logger.exception('Could not verify Daraja callback for %s.', context)
+        return None, ('Payment verification temporarily unavailable', 503)
 
     try:
         query_result_code = int(query_result.get('ResultCode', -1))
@@ -1684,8 +1805,37 @@ def process_daraja_callback(payload):
         or query_result.get('CheckoutRequestID') != checkout_request_id
         or query_result_code != callback_result_code
     ):
-        app.logger.warning('Daraja query did not match callback for booking %s.', booking.id)
-        return 'Payment verification is pending', 503
+        app.logger.warning('Daraja query did not match callback for %s.', context)
+        return None, ('Payment verification is pending', 503)
+    return query_result, None
+
+
+def _callback_amount_and_phone(stk_callback):
+    """Amount, payer phone, and receipt from a successful STK callback."""
+    metadata = _callback_metadata(stk_callback)
+    receipt = metadata.get('MpesaReceiptNumber')
+    phone_number = metadata.get('PhoneNumber')
+    try:
+        raw_amount = metadata.get('Amount')
+        if raw_amount is None or phone_number is None:
+            raise ValueError('Missing payment amount or phone number')
+        amount = int(raw_amount)
+        phone_number = str(int(phone_number))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(receipt, str) or not receipt:
+        return None
+    return amount, phone_number, receipt
+
+
+def _process_booking_daraja_callback(booking, stk_callback, checkout_request_id, callback_result_code):
+    if booking.payment_status != 'pending':
+        return '', 204
+
+    context = f'booking {booking.id}'
+    query_result, error = _verified_daraja_result(checkout_request_id, callback_result_code, context)
+    if error:
+        return error
 
     if callback_result_code != 0:
         try:
@@ -1699,23 +1849,11 @@ def process_daraja_callback(payload):
             return 'Could not update booking availability', 503
         return '', 204
 
-    metadata = _callback_metadata(stk_callback)
-    receipt = metadata.get('MpesaReceiptNumber')
-    phone_number = metadata.get('PhoneNumber')
-    try:
-        raw_amount = metadata.get('Amount')
-        if raw_amount is None or phone_number is None:
-            raise ValueError('Missing payment amount or phone number')
-        amount = int(raw_amount)
-        phone_number = str(int(phone_number))
-    except (TypeError, ValueError):
+    details = _callback_amount_and_phone(stk_callback)
+    if details is None:
         return 'Invalid payment details', 400
-    if (
-        not isinstance(receipt, str)
-        or not receipt
-        or amount != int(round(booking.amount))
-        or phone_number != booking.phone.removeprefix('+')
-    ):
+    amount, phone_number, receipt = details
+    if amount != int(round(booking.amount)) or phone_number != booking.phone.removeprefix('+'):
         app.logger.error('Daraja payment details did not match booking %s.', booking.id)
         return 'Payment details did not match booking', 400
 
@@ -1743,6 +1881,69 @@ def process_daraja_callback(payload):
         send_refund_notification(booking, paid=False)
     else:
         send_booking_confirmation(booking, payment_confirmed=True)
+    return '', 204
+
+
+def activate_vendor_subscription(vendor, payment):
+    """Extend a partner's subscription by the month the payment just bought."""
+    now = datetime.utcnow()
+    start = vendor.subscription_renews_at if vendor.subscription_is_active() else now
+    if not start or start < now:
+        start = now
+    payment.period_start = start
+    payment.period_end = start + VENDOR_SUBSCRIPTION_PERIOD
+    vendor.subscription_status = 'active'
+    vendor.subscription_plan = 'monthly'
+    vendor.subscription_started_at = vendor.subscription_started_at or now
+    vendor.subscription_renews_at = payment.period_end
+    vendor.subscription_monthly_fee = float(payment.amount or 0)
+
+
+def _process_subscription_daraja_callback(payment, stk_callback, checkout_request_id, callback_result_code):
+    if payment.status != 'pending':
+        return '', 204
+
+    context = f'subscription payment {payment.id}'
+    query_result, error = _verified_daraja_result(checkout_request_id, callback_result_code, context)
+    if error:
+        return error
+
+    if callback_result_code != 0:
+        payment.status = 'failed'
+        db.session.commit()
+        app.logger.info(
+            'M-Pesa subscription payment %s failed: %s',
+            payment.id,
+            query_result.get('ResultDesc') or stk_callback.get('ResultDesc') or 'Payment was not completed.',
+        )
+        return '', 204
+
+    details = _callback_amount_and_phone(stk_callback)
+    if details is None:
+        return 'Invalid payment details', 400
+    amount, phone_number, receipt = details
+    if amount != int(round(payment.amount)) or phone_number != payment.phone.removeprefix('+'):
+        app.logger.error('Daraja payment details did not match subscription payment %s.', payment.id)
+        return 'Payment details did not match subscription', 400
+
+    vendor = db.session.get(VendorAccount, payment.vendor_id)
+    if vendor is None:
+        app.logger.error('Subscription payment %s has no partner account.', payment.id)
+        return 'Subscription payment has no partner account', 409
+
+    payment.status = 'paid'
+    payment.mpesa_receipt_number = receipt
+    payment.paid_at = datetime.utcnow()
+    activate_vendor_subscription(vendor, payment)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        app.logger.exception('Daraja receipt could not be uniquely assigned to subscription payment %s.', payment.id)
+        return 'Payment receipt was already processed', 409
+    app.logger.info(
+        'Partner %s renewed its subscription until %s.', vendor.id, vendor.subscription_renews_at
+    )
     return '', 204
 
 
@@ -1805,10 +2006,10 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
     document_id = f"{'INV' if document_type == 'invoice' else 'RCT'}-{booking.id:06d}"
     issued_at = booking.payment_confirmed_at if document_type == 'receipt' else booking.created_at
     issued_at = issued_at or datetime.utcnow()
-    document.setTitle(f'Kenya Tours {document_type.title()} {document_id}')
+    document.setTitle(f'{BRAND_NAME} {document_type.title()} {document_id}')
     document.setFillColorRGB(0.13, 0.25, 0.22)
     document.setFont('Helvetica-Bold', 22)
-    document.drawString(72, 730, 'Kenya Tours')
+    document.drawString(72, 730, BRAND_NAME)
     document.setFont('Helvetica', 10)
     document.setFillColorRGB(0.35, 0.40, 0.37)
     document.drawString(72, 712, safe_text(SITE_URL))
@@ -1838,7 +2039,7 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
     else:
         rows.extend([
             ('Experience', booking_listing_name(booking)),
-            ('Date and time', f'{booking.date} at {booking.time} (Lamu time)'),
+            ('Date and time', f'{booking.date} at {booking.time} (Kenya time)'),
         ])
     rows.extend([
         ('Guests', str(booking.guests)),
@@ -1870,12 +2071,20 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
     else:
         summary = f'{booking.guests} guest(s) - {booking_listing_name(booking)}'
     document.drawString(72, y, safe_text(summary))
-    document.setFont('Helvetica-Bold', 12)
-    document.setFillColorRGB(0.13, 0.25, 0.22)
-    document.drawRightString(540, y, f'KSh {booking.amount:,.0f}')
+    subtotal_amount = booking.subtotal_amount or booking.amount
+    service_fee_amount = booking.service_fee_amount or 0
+    service_fee_rate = booking.guest_service_fee_rate or 0
+    document.drawRightString(540, y, f'KSh {subtotal_amount:,.0f}')
+    y -= 22
+    document.drawString(72, y, safe_text(f'Service fee ({service_fee_rate:g}%)'))
+    document.drawRightString(540, y, f'KSh {service_fee_amount:,.0f}')
+    if booking.booking_fee_amount:
+        y -= 22
+        document.drawString(72, y, 'Booking fee')
+        document.drawRightString(540, y, f'KSh {booking.booking_fee_amount:,.0f}')
     y -= 32
     document.setFont('Helvetica-Bold', 14)
-    document.drawString(72, y, 'TOTAL')
+    document.drawString(72, y, 'TOTAL PAID' if document_type == 'receipt' else 'TOTAL DUE')
     document.drawRightString(540, y, f'KSh {booking.amount:,.0f}')
 
     document.setFont('Helvetica', 9)
@@ -1911,21 +2120,24 @@ def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> b
         f"We received your booking request for {listing_name}.\n"
         + booking_details
         + f"Guests: {booking.guests}\n"
-        f"Estimated total: KSh {booking.amount:,.0f}\n"
+        f"Subtotal: KSh {booking.subtotal_amount or booking.amount:,.0f}\n"
+        f"Service fee ({(booking.guest_service_fee_rate or 0):g}%): KSh {booking.service_fee_amount or 0:,.0f}\n"
+        f"Booking fee: KSh {booking.booking_fee_amount or 0:,.0f}\n"
+        f"Total payable: KSh {booking.amount:,.0f}\n"
         f"Booking status: {booking.status}\n"
         + (
             f"M-Pesa payment received and verified. Receipt: {booking.mpesa_receipt_number}. Your invoice and receipt are attached.\n"
             if payment_confirmed
             else "Check the M-Pesa prompt on your phone to complete payment. We will confirm your booking after Daraja verifies the payment. Your invoice is attached.\n"
         )
-        + "\nYou can sign in at the Kenya Tours website to view and manage bookings made with your account.\n"
+        + f"\nYou can sign in at the {BRAND_NAME} website to view and manage bookings made with your account.\n"
     )
     try:
         invoice = generate_booking_document(booking, 'invoice')
-        message.add_attachment(invoice, maintype='application', subtype='pdf', filename=f'Kenya-Tours-Invoice-{booking.id}.pdf')
+        message.add_attachment(invoice, maintype='application', subtype='pdf', filename=f'{BRAND_NAME}-Invoice-{booking.id}.pdf')
         if booking.mpesa_receipt_number and booking.payment_status in {'paid', 'refunded'}:
             receipt = generate_booking_document(booking, 'receipt')
-            message.add_attachment(receipt, maintype='application', subtype='pdf', filename=f'Kenya-Tours-Receipt-{booking.id}.pdf')
+            message.add_attachment(receipt, maintype='application', subtype='pdf', filename=f'{BRAND_NAME}-Receipt-{booking.id}.pdf')
     except Exception:
         app.logger.exception('Could not generate payment documents for booking %s.', booking.id)
     return send_email_message(message, context=f'booking {booking.id} confirmation')
@@ -1950,7 +2162,7 @@ def send_booking_status_notification(booking: Booking) -> bool:
     message['To'] = booking.email
     message.set_content(
         f"Hello {booking.name},\n\n"
-        f"The status of your Kenya Tours booking #{booking.id} is now: {booking.status.replace('_', ' ').title()}.\n"
+        f"The status of your {BRAND_NAME} booking #{booking.id} is now: {booking.status.replace('_', ' ').title()}.\n"
         + listing_details
         + "\nContact our team if you have questions about this update.\n"
     )
@@ -1986,7 +2198,7 @@ def send_refund_notification(booking: Booking, *, paid: bool) -> bool:
         f"Hello {booking.name},\n\n"
         + message_body
         + f"Listing: {booking_listing_name(booking)}\n"
-        + "\nYou can follow the refund status in My bookings on the Kenya Tours website.\n"
+        + f"\nYou can follow the refund status in My bookings on the {BRAND_NAME} website.\n"
     )
     return send_email_message(message, context=f'booking {booking.id} refund update')
 
@@ -2375,13 +2587,20 @@ def admin_operations():
         ), 0),
         db.func.coalesce(db.func.sum(
             case(
-                (Booking.payment_status == 'paid', Booking.amount * Booking.commission_rate / 100),
+                (
+                    Booking.payment_status == 'paid',
+                    Booking.service_fee_amount + Booking.booking_fee_amount + Booking.host_commission_amount,
+                ),
                 else_=0,
             )
+        ), 0),
+        db.func.coalesce(db.func.sum(
+            case((Booking.payment_status == 'paid', Booking.host_payout_amount), else_=0)
         ), 0),
     ).group_by(Booking.tour).order_by(db.func.count(Booking.id).desc()).all()
     total_paid = sum(float(row[2] or 0) for row in report_rows)
     total_commission = sum(float(row[3] or 0) for row in report_rows)
+    total_host_payout = sum(float(row[4] or 0) for row in report_rows)
     report_tour_slugs = {row[0] for row in report_rows}
     report_tour_names = {
         tour.slug: tour.name for tour in Tour.query.filter(Tour.slug.in_(report_tour_slugs)).all()
@@ -2577,7 +2796,11 @@ def admin_operations():
     return {
         'csrf_token': session['admin_csrf'],
         'settings': {
-            'commission_rate': float(get_admin_setting('commission_rate', 15)),
+            'host_commission_rate': platform_fee_rates()[0],
+            'subscriber_host_commission_rate': platform_subscriber_rate(),
+            'guest_service_fee_rate': platform_fee_rates()[1],
+            'booking_fee': platform_booking_fee(),
+            'subscription_monthly_fee': platform_subscription_fee(),
             'refund_policy': get_admin_setting('refund_policy', 'automatic'),
             'cancellation_window_hours': int(get_admin_setting('cancellation_window_hours', 48)),
         },
@@ -2594,6 +2817,15 @@ def admin_operations():
             'total_bookings': Booking.query.count(),
             'paid_revenue': total_paid,
             'commission_earned': total_commission,
+            'host_payout_due': total_host_payout,
+            'subscription_revenue': float(
+                db.session.query(
+                    db.func.coalesce(db.func.sum(VendorSubscriptionPayment.amount), 0)
+                ).filter(VendorSubscriptionPayment.status == 'paid').scalar() or 0
+            ),
+            'active_subscriptions': sum(
+                1 for row in vendors if row['subscription']['is_active']
+            ),
             'period_days': period_days,
             'funnel': funnel,
             'traffic_sources': traffic_sources,
@@ -2610,6 +2842,7 @@ def admin_operations():
                 'bookings': row[1],
                 'paid_revenue': float(row[2] or 0),
                 'commission_earned': float(row[3] or 0),
+                'host_payout': float(row[4] or 0),
             } for row in report_rows],
         },
     }
@@ -2622,19 +2855,42 @@ def admin_update_settings():
     if response:
         return response
     payload = json_payload()
+
+    def fee_rate(name, label):
+        raw = payload.get(name)
+        if raw is None or raw == '':
+            raise ValueError(f'{label} is required.')
+        value = float(raw)
+        if not math.isfinite(value) or not 0 <= value <= 25:
+            raise ValueError(f'{label} must be between 0% and 25%.')
+        return value
+
     try:
-        raw_commission_rate = payload.get('commission_rate')
-        if raw_commission_rate is None:
-            raise ValueError('Commission rate is required.')
-        commission_rate = float(raw_commission_rate)
-    except (TypeError, ValueError):
-        return {'error': 'Commission must be a number between 10% and 20%.'}, 400
-    if not math.isfinite(commission_rate) or not 10 <= commission_rate <= 20:
-        return {'error': 'Commission must be between 10% and 20%.'}, 400
+        host_rate = fee_rate('host_commission_rate', 'Host commission')
+        subscriber_rate = fee_rate('subscriber_host_commission_rate', 'Subscriber commission')
+        guest_rate = fee_rate('guest_service_fee_rate', 'Guest service fee')
+        raw_booking_fee = payload.get('booking_fee')
+        if raw_booking_fee is None or raw_booking_fee == '':
+            raise ValueError('Booking fee is required.')
+        booking_fee = float(raw_booking_fee)
+        if not math.isfinite(booking_fee) or not 0 <= booking_fee <= 5000:
+            raise ValueError('Booking fee must be between KSh 0 and KSh 5,000.')
+        raw_subscription_fee = payload.get('subscription_monthly_fee')
+        if raw_subscription_fee is None or raw_subscription_fee == '':
+            raise ValueError('Subscription fee is required.')
+        subscription_fee = float(raw_subscription_fee)
+        if not math.isfinite(subscription_fee) or not 0 <= subscription_fee <= 50000:
+            raise ValueError('Subscription fee must be between KSh 0 and KSh 50,000.')
+    except (TypeError, ValueError) as exc:
+        return {'error': str(exc)}, 400
     if payload.get('refund_policy', 'automatic') != 'automatic':
         return {'error': 'Paid bookings are refunded automatically when they are cancelled.'}, 400
     for key, value in {
-        'commission_rate': f'{commission_rate:g}',
+        'host_commission_rate': f'{host_rate:g}',
+        'subscriber_host_commission_rate': f'{subscriber_rate:g}',
+        'guest_service_fee_rate': f'{guest_rate:g}',
+        'booking_fee': f'{booking_fee:g}',
+        'subscription_monthly_fee': f'{subscription_fee:g}',
         'refund_policy': 'automatic',
         'cancellation_window_hours': '48',
     }.items():
@@ -2645,7 +2901,11 @@ def admin_update_settings():
             db.session.add(AdminSetting(key=key, value=value))
     db.session.commit()
     return {'settings': {
-        'commission_rate': commission_rate,
+        'host_commission_rate': host_rate,
+        'subscriber_host_commission_rate': subscriber_rate,
+        'guest_service_fee_rate': guest_rate,
+        'booking_fee': booking_fee,
+        'subscription_monthly_fee': subscription_fee,
         'refund_policy': 'automatic',
         'cancellation_window_hours': 48,
     }}
@@ -3888,7 +4148,158 @@ def vendor_catalogue():
         'service_price_units': list(SERVICE_PRICE_UNITS),
         'tour_types': [[key, label] for key, label in TOUR_TYPES.items()],
         'tour_group_types': [[key, label] for key, label in TOUR_GROUP_TYPES.items()],
+        'subscription': vendor_subscription_payload(vendor),
     }
+
+
+def vendor_subscription_payload(vendor):
+    """Subscription state, the commission it earns, and recent payments."""
+    standard_rate = platform_fee_rates()[0]
+    subscriber_rate = platform_subscriber_rate()
+    active = vendor.subscription_is_active()
+    payments = VendorSubscriptionPayment.query.filter_by(vendor_id=vendor.id).order_by(
+        VendorSubscriptionPayment.created_at.desc(), VendorSubscriptionPayment.id.desc()
+    ).limit(6).all()
+    return {
+        'status': 'active' if active else 'inactive',
+        'is_active': active,
+        'is_tour_operator': vendor.is_tour_operator(),
+        'eligible': vendor.is_tour_operator(),
+        'started_at': vendor.subscription_started_at.isoformat() + 'Z' if vendor.subscription_started_at else None,
+        'renews_at': vendor.subscription_renews_at.isoformat() + 'Z' if vendor.subscription_renews_at else None,
+        'monthly_fee': platform_subscription_fee(),
+        'paid_monthly_fee': float(vendor.subscription_monthly_fee or 0),
+        'host_commission_rate': subscriber_rate if active else standard_rate,
+        'standard_host_commission_rate': standard_rate,
+        'subscriber_host_commission_rate': subscriber_rate,
+        'payments': [payment.to_dict() for payment in payments],
+    }
+
+
+@app.route('/api/vendor/subscription/renew', methods=['POST'])
+@vendor_required
+@limiter.limit('6 per minute')
+def vendor_renew_subscription():
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Partner sign-in is required.'}, 401
+    response = require_vendor_csrf()
+    if response:
+        return response
+    if not vendor.is_tour_operator():
+        return {'error': 'Monthly subscriptions are available to tour and safari operators.'}, 400
+    if not vendor.is_active:
+        return {'error': 'Restore your partner access before renewing a subscription.'}, 403
+    if not is_daraja_configured():
+        return {'error': 'M-Pesa payments are not configured right now. Please try again later.'}, 503
+
+    amount = platform_subscription_fee()
+    if amount <= 0:
+        return {'error': 'Subscriptions are not open for renewal right now.'}, 400
+
+    payload = json_payload()
+    try:
+        mpesa_phone = normalize_mpesa_phone(
+            str(payload.get('country_code', '+254')).strip(),
+            str(payload.get('phone', '')).strip(),
+        )
+    except ValueError as exc:
+        return {'error': str(exc)}, 400
+
+    if VendorSubscriptionPayment.query.filter_by(vendor_id=vendor.id, status='pending').first():
+        return {
+            'error': 'A subscription payment is already waiting for confirmation. Finish it on your phone, then try again in a few minutes.'
+        }, 409
+
+    payment = VendorSubscriptionPayment(
+        vendor_id=vendor.id,
+        amount=amount,
+        phone=mpesa_phone,
+        status='pending',
+    )
+    db.session.add(payment)
+    db.session.commit()
+    try:
+        request_result = initiate_stk_push(mpesa_phone, int(round(amount)), f'SUB{payment.id}')
+    except DarajaError as exc:
+        if exc.outcome_unknown:
+            # The prompt may still have reached the phone, so keep the reference
+            # visible for the partner instead of inviting a second payment.
+            payment.status = 'failed'
+            db.session.commit()
+            app.logger.warning('M-Pesa subscription request unconfirmed: %s', exc)
+            return {
+                'message': 'The M-Pesa request may have been sent. Check your phone and contact support with this reference before trying again.',
+                'payment_reference': payment.reference,
+                'payment_pending': True,
+            }, 202
+        payment.status = 'failed'
+        db.session.commit()
+        return {'error': str(exc)}, 502
+
+    payment.checkout_request_id = request_result['checkout_request_id']
+    payment.merchant_request_id = request_result['merchant_request_id']
+    db.session.commit()
+    return {
+        'message': request_result['customer_message'],
+        'payment_reference': payment.reference,
+        'subscription': vendor_subscription_payload(vendor),
+    }, 202
+
+
+@app.route('/api/vendor/subscription/status/<string:reference>')
+@vendor_required
+@limiter.limit('60 per minute')
+def vendor_subscription_status(reference):
+    vendor = get_current_vendor()
+    if vendor is None:
+        return {'error': 'Partner sign-in is required.'}, 401
+    payment = VendorSubscriptionPayment.query.filter_by(
+        reference=reference, vendor_id=vendor.id
+    ).first()
+    if not payment:
+        return {'error': 'Subscription payment not found.'}, 404
+    return {
+        'payment': payment.to_dict(),
+        'subscription': vendor_subscription_payload(vendor),
+    }
+
+
+@app.route('/api/admin/vendors/<int:vendor_id>/subscription', methods=['POST'])
+@admin_required
+def admin_update_vendor_subscription(vendor_id):
+    response = require_admin_csrf()
+    if response:
+        return response
+    vendor = db.session.get(VendorAccount, vendor_id)
+    if not vendor:
+        return {'error': 'Partner account not found.'}, 404
+    payload = json_payload()
+    action = payload.get('action')
+    if action == 'activate':
+        try:
+            months = int(payload.get('months', 1))
+        except (TypeError, ValueError):
+            months = 0
+        if not 1 <= months <= 12:
+            return {'error': 'Choose between 1 and 12 subscription months.'}, 400
+        now = datetime.utcnow()
+        start = vendor.subscription_renews_at if vendor.subscription_is_active() else now
+        if not start or start < now:
+            start = now
+        vendor.subscription_status = 'active'
+        vendor.subscription_plan = 'complimentary'
+        vendor.subscription_started_at = vendor.subscription_started_at or now
+        vendor.subscription_renews_at = start + VENDOR_SUBSCRIPTION_PERIOD * months
+        vendor.subscription_monthly_fee = 0.0
+    elif action == 'end':
+        vendor.subscription_status = 'inactive'
+        # Backdate so the account falls back to the standard commission today.
+        vendor.subscription_renews_at = datetime.utcnow() - timedelta(days=1)
+    else:
+        return {'error': 'Choose a valid subscription action.'}, 400
+    db.session.commit()
+    return {'vendor': vendor.to_dict()}
 
 
 def vendor_booking_rows(vendor_id):
@@ -4203,6 +4614,13 @@ def public_catalogue():
         'destinations': [item.to_dict() for item in Destination.query.order_by(Destination.name).all()],
         'whatsapp_business_phone': WHATSAPP_BUSINESS_PHONE,
         'social_links': social_profile_links(),
+        'fees': {
+            'host_commission_rate': platform_fee_rates()[0],
+            'subscriber_host_commission_rate': platform_subscriber_rate(),
+            'guest_service_fee_rate': platform_fee_rates()[1],
+            'booking_fee': platform_booking_fee(),
+            'subscription_monthly_fee': platform_subscription_fee(),
+        },
     }
 
 
@@ -4827,7 +5245,7 @@ def _fetch_json(url):
 
     request_object = urllib.request.Request(
         url,
-        headers={'Accept': 'application/json', 'User-Agent': 'KenyaTours/1.0'}
+        headers={'Accept': 'application/json', 'User-Agent': f'{BRAND_NAME}/1.0'}
     )
     try:
         # Only allow-listed HTTPS provider hosts reach this call.
@@ -5523,6 +5941,235 @@ def newsletter_signup():
     return {'message': 'You are on the list. Karibu!', 'already_subscribed': False}, 201
 
 
+CHAT_MESSAGE_LIMIT = 2000
+CHAT_TOKEN_PATTERN = re.compile(r'^[a-f0-9]{32}$')
+
+
+def clean_chat_body(value):
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(value or '')).strip()[:CHAT_MESSAGE_LIMIT]
+
+
+def clean_chat_name(value):
+    return re.sub(r'\s+', ' ', str(value or '')).strip()[:100]
+
+
+def clean_chat_email(value):
+    email = str(value or '').strip().lower()[:160]
+    return email if re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email) else ''
+
+
+def clean_chat_page(value):
+    page = str(value or '').strip()[:160]
+    return page if page.startswith('/') else ''
+
+
+def chat_token_from_request(payload=None):
+    """Read the visitor token from the header or a JSON body.
+
+    The token is the only key to a thread, so anything that is not a full
+    32-character hex string is treated as no token at all.
+    """
+    token = request.headers.get('X-Chat-Token', '')
+    if not token and isinstance(payload, dict):
+        token = payload.get('token') or ''
+    token = str(token).strip().lower()
+    return token if CHAT_TOKEN_PATTERN.fullmatch(token) else ''
+
+
+def find_chat_conversation(token):
+    if not token:
+        return None
+    return ChatConversation.query.filter_by(token=token).first()
+
+
+def chat_thread_payload(conversation, *, after=0):
+    query = ChatMessage.query.filter_by(conversation_id=conversation.id)
+    if after:
+        query = query.filter(ChatMessage.id > after)
+    messages = query.order_by(ChatMessage.id.asc()).limit(200).all()
+    return {
+        'token': conversation.token,
+        'status': conversation.status,
+        'name': conversation.name or '',
+        'email': conversation.email or '',
+        'messages': [message.to_dict() for message in messages],
+    }
+
+
+def send_chat_notification(conversation, message):
+    """Best-effort email so the team notices a chat that is waiting."""
+    if not EMAIL_TO:
+        app.logger.warning('Email notification skipped: missing EMAIL_TO configuration.')
+        return False
+
+    email = EmailMessage()
+    email['Subject'] = f'New live chat from {conversation.name or "a visitor"}'
+    email['From'] = EMAIL_FROM
+    email['To'] = EMAIL_TO
+    email.set_content(
+        f"Name: {conversation.name or 'Not given'}\n"
+        f"Email: {conversation.email or 'Not given'}\n"
+        f"Page: {conversation.page or 'Unknown'}\n"
+        f"Message:\n{message.body}\n"
+        f"Sent at: {message.created_at.isoformat()}Z\n"
+        "Reply in the admin inbox: /dashboard\n"
+    )
+    return send_email_message(email, context=f'live chat {conversation.id}')
+
+
+@app.route('/api/support/chat', methods=['GET'])
+@limiter.limit('180 per minute')
+def support_chat_thread():
+    """Poll the visitor's thread; a missing token simply means no chat yet."""
+    conversation = find_chat_conversation(chat_token_from_request())
+    if conversation is None:
+        return {'token': '', 'status': '', 'messages': []}, 200
+
+    after = request.args.get('after', type=int) or 0
+    payload = chat_thread_payload(conversation, after=after)
+    if conversation.visitor_unread:
+        conversation.visitor_unread = 0
+        db.session.commit()
+    return payload, 200
+
+
+@app.route('/api/support/chat', methods=['POST'])
+@limiter.limit('120 per hour', methods=['POST'])
+def support_chat_send():
+    """Start a thread on the first message, then append to it."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return {'error': 'Chat messages must be sent as JSON.'}, 400
+
+    body = clean_chat_body(payload.get('body'))
+    if not body:
+        return {'error': 'Type a message before sending.'}, 400
+
+    conversation = find_chat_conversation(chat_token_from_request(payload))
+    started = conversation is None
+    if started:
+        conversation = ChatConversation(
+            token=secrets.token_hex(16),
+            page=clean_chat_page(payload.get('page')),
+        )
+        db.session.add(conversation)
+        db.session.flush()
+
+    name = clean_chat_name(payload.get('name'))
+    email = clean_chat_email(payload.get('email'))
+    if name:
+        conversation.name = name
+    if email:
+        conversation.email = email
+
+    now = datetime.utcnow()
+    message = ChatMessage(
+        conversation_id=conversation.id,
+        sender=ChatMessage.VISITOR,
+        body=body,
+        created_at=now,
+    )
+    db.session.add(message)
+    conversation.status = ChatConversation.OPEN
+    conversation.staff_unread = (conversation.staff_unread or 0) + 1
+    conversation.message_count = (conversation.message_count or 0) + 1
+    conversation.last_message_at = now
+    conversation.updated_at = now
+    db.session.commit()
+
+    if started:
+        send_chat_notification(conversation, message)
+
+    return chat_thread_payload(conversation), 201
+
+
+@app.route('/api/admin/chat', methods=['GET'])
+@admin_required
+@limiter.limit('240 per minute')
+def admin_chat_inbox():
+    """Conversation list for the live chat inbox."""
+    status_filter = request.args.get('status', 'open')
+    query = ChatConversation.query
+    if status_filter in {ChatConversation.OPEN, ChatConversation.CLOSED}:
+        query = query.filter(ChatConversation.status == status_filter)
+    conversations = query.order_by(ChatConversation.updated_at.desc()).limit(60).all()
+
+    unread_count = db.session.query(db.func.coalesce(db.func.sum(ChatConversation.staff_unread), 0)).scalar()
+    return {
+        'csrf_token': session.get('admin_csrf', ''),
+        'conversations': [conversation.to_dict() for conversation in conversations],
+        'open_count': ChatConversation.query.filter_by(status=ChatConversation.OPEN).count(),
+        'unread_count': int(unread_count or 0),
+    }, 200
+
+
+@app.route('/api/admin/chat/<int:conversation_id>', methods=['GET'])
+@admin_required
+@limiter.limit('240 per minute')
+def admin_chat_thread(conversation_id):
+    conversation = db.session.get(ChatConversation, conversation_id)
+    if conversation is None:
+        return {'error': 'That conversation no longer exists.'}, 404
+
+    after = request.args.get('after', type=int) or 0
+    payload = chat_thread_payload(conversation, after=after)
+    payload['conversation'] = conversation.to_dict()
+    payload['csrf_token'] = session.get('admin_csrf', '')
+    if conversation.staff_unread:
+        conversation.staff_unread = 0
+        db.session.commit()
+    return payload, 200
+
+
+@app.route('/api/admin/chat/<int:conversation_id>', methods=['POST'])
+@admin_required
+@limiter.limit('240 per hour', methods=['POST'])
+def admin_chat_reply(conversation_id):
+    response = require_admin_csrf()
+    if response is not None:
+        return response
+
+    conversation = db.session.get(ChatConversation, conversation_id)
+    if conversation is None:
+        return {'error': 'That conversation no longer exists.'}, 404
+
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    action = str(payload.get('action') or 'reply').strip().lower()
+
+    if action in {'close', 'reopen'}:
+        conversation.status = ChatConversation.CLOSED if action == 'close' else ChatConversation.OPEN
+        conversation.updated_at = datetime.utcnow()
+        if action == 'reopen':
+            conversation.staff_unread = 0
+        db.session.commit()
+        return {'conversation': conversation.to_dict()}, 200
+
+    body = clean_chat_body(payload.get('body'))
+    if not body:
+        return {'error': 'Type a reply before sending.'}, 400
+
+    admin = db.session.get(AdminAccount, session['admin_id'])
+    now = datetime.utcnow()
+    message = ChatMessage(
+        conversation_id=conversation.id,
+        sender=ChatMessage.STAFF,
+        author=clean_chat_name(admin.name if admin else ''),
+        body=body,
+        created_at=now,
+    )
+    db.session.add(message)
+    conversation.status = ChatConversation.OPEN
+    conversation.staff_unread = 0
+    conversation.visitor_unread = (conversation.visitor_unread or 0) + 1
+    conversation.message_count = (conversation.message_count or 0) + 1
+    conversation.last_message_at = now
+    conversation.updated_at = now
+    db.session.commit()
+
+    return {'message': message.to_dict(), 'conversation': conversation.to_dict()}, 201
+
+
 @app.route('/contact-submit', methods=['POST'])
 @limiter.limit('10 per hour', methods=['POST'])
 def contact_submit():
@@ -5630,6 +6277,18 @@ def booking_confirmation():
                 return {'error': message}, 400
             return redirect('/booking.html?error=Please%20select%20a%20valid%20tour%20and%20guest%20count')
 
+    # Subscribed tour operators are charged the lower commission, so the quote
+    # needs to know who owns the listing being booked.
+    listing_vendor_id = (
+        stay['property'].vendor_id
+        if stay
+        else db.session.query(Tour.vendor_id).filter(Tour.slug == tour).scalar()
+    )
+    try:
+        fees = booking_fee_quote(total_amount, listing_vendor_id)
+    except ValueError as exc:
+        return booking_request_error(str(exc), 400)
+
     tour_item = None if stay else db.session.get(Tour, tour)
     schedule = None
     if tour_item:
@@ -5668,8 +6327,16 @@ def booking_confirmation():
             'time': '',
             'guests': guest_count,
             'message': data.get('message', ''),
-            'amount': total_amount,
-            'commission_rate': float(get_admin_setting('commission_rate', 15)),
+            'amount': fees['total'],
+            'subtotal_amount': fees['subtotal'],
+            'service_fee_amount': fees['guest_service_fee'],
+            'booking_fee_amount': fees['booking_fee'],
+            'host_commission_amount': fees['host_commission'],
+            'host_payout_amount': fees['host_payout'],
+            'host_commission_rate': fees['host_commission_rate'],
+            'guest_service_fee_rate': fees['guest_service_fee_rate'],
+            # Kept for older admin exports that still read the legacy rate.
+            'commission_rate': fees['host_commission_rate'],
             'traffic_source': session.get('analytics_source', 'Unattributed'),
             'payment_status': 'pending',
             'booking_type': 'property',
@@ -5692,8 +6359,16 @@ def booking_confirmation():
             'time': schedule.starts_at.strftime('%H:%M') if schedule else data.get('time', ''),
             'guests': guests,
             'message': data.get('message', ''),
-            'amount': total_amount,
-            'commission_rate': float(get_admin_setting('commission_rate', 15)),
+            'amount': fees['total'],
+            'subtotal_amount': fees['subtotal'],
+            'service_fee_amount': fees['guest_service_fee'],
+            'booking_fee_amount': fees['booking_fee'],
+            'host_commission_amount': fees['host_commission'],
+            'host_payout_amount': fees['host_payout'],
+            'host_commission_rate': fees['host_commission_rate'],
+            'guest_service_fee_rate': fees['guest_service_fee_rate'],
+            # Kept for older admin exports that still read the legacy rate.
+            'commission_rate': fees['host_commission_rate'],
             'traffic_source': session.get('analytics_source', 'Unattributed'),
             'payment_status': 'pending',
             'timestamp': datetime.utcnow().isoformat() + 'Z'
@@ -5810,7 +6485,7 @@ def payment_document(payment_reference, document_type):
         BytesIO(pdf),
         mimetype='application/pdf',
         as_attachment=True,
-        download_name=f'Kenya-Tours-{document_type.title()}-{booking.id}.pdf',
+        download_name=f'{BRAND_NAME}-{document_type.title()}-{booking.id}.pdf',
         max_age=0,
     )
 

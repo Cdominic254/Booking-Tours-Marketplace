@@ -10,6 +10,8 @@ import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from saas.brand import BRAND_NAME
+
 
 class DarajaError(RuntimeError):
     def __init__(self, message, *, outcome_unknown=False):
@@ -148,8 +150,9 @@ def initiate_stk_push(phone_number, amount, booking_id):
             'PartyB': config['shortcode'],
             'PhoneNumber': phone_number,
             'CallBackURL': config['callback_url'],
-            'AccountReference': f'KT-{booking_id}',
-            'TransactionDesc': f'Kenya Tours booking {booking_id}',
+            'AccountReference': f'KB-{booking_id}',
+            # Daraja caps TransactionDesc at 13 characters, so only the brand fits.
+            'TransactionDesc': BRAND_NAME,
         },
         headers={
             'Authorization': f'Bearer {token}',
