@@ -79,7 +79,7 @@ The test suite covers authentication rate limits, CSRF protection, access contro
 
 ## Vercel Deployment
 
-Connect this GitHub repository to Vercel with the repository root as the project root. `vercel.json` builds the Vite frontend, sets a 60-second function timeout, and bundles `frontend/dist`, `images`, `pictures`, `saas`, and `logo.svg` with the Flask function in `app.py` while excluding tests, docs, local databases, and `frontend/node_modules`/`frontend/src` from the bundle. Python 3.12 is pinned by `.python-version`.
+Connect this GitHub repository to Vercel with the repository root as the project root, which also gives every push and pull request its own preview URL. `vercel.json` declares a single `web` service with its root at `.`: it builds the Vite frontend, sets a 60-second function timeout, and bundles `frontend/dist`, `images`, `pictures`, `saas`, and `logo.svg` with the Flask function in `app.py` while excluding tests, docs, local databases, and `frontend/node_modules`/`frontend/src` from the bundle. A catch-all `rewrites` rule sends every request to that service, because services stay internal until a top-level rewrite routes public traffic to them. Build and function settings live inside the service rather than at the top level, which Vercel rejects once `services` is present. Python 3.12 is pinned by `.python-version`.
 
 Configure these production and preview environment variables in the Vercel project settings:
 
@@ -97,7 +97,7 @@ On Vercel the app trusts the edge's `X-Forwarded-*` headers, so rate limits key 
 
 ### CI/CD
 
-GitHub Actions runs the backend tests and frontend build before the gated Vercel deployment job. To enable deployments, add repository secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`, then set the repository variable `VERCEL_DEPLOY_ENABLED=true`.
+GitHub Actions runs the backend tests and frontend build on every push. Deployments are handled by Vercel's GitHub integration, which is connected to this repository, so leave the optional `deploy-vercel` job disabled: setting the repository variable `VERCEL_DEPLOY_ENABLED=true` together with the `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` secrets would deploy a second time for the same commit.
 
 Push to `main` or the `Booking-Tours-Marketplace` branch for production. Same-repository pull requests create preview deployments; fork pull requests run CI only.
 

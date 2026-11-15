@@ -1,12 +1,25 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": null,
-  "buildCommand": "npm --prefix frontend ci && npm --prefix frontend run build",
-  "functions": {
-    "app.py": {
-      "maxDuration": 60,
-      "includeFiles": "{frontend/dist/**,images/**,pictures/**,saas/**,logo.svg}",
-      "excludeFiles": "{tests/**,docs/**,pytest-of-*/**,instance/**,uploads/**,frontend/node_modules/**,frontend/src/**,*.db,*.code-workspace}"
+  "services": {
+    "web": {
+      "root": ".",
+      "framework": "flask",
+      "buildCommand": "npm --prefix frontend ci && npm --prefix frontend run build",
+      "functions": {
+        "app.py": {
+          "maxDuration": 60,
+          "includeFiles": "{frontend/dist/**,images/**,pictures/**,saas/**,logo.svg}",
+          "excludeFiles": "{tests/**,docs/**,pytest-of-*/**,instance/**,uploads/**,frontend/node_modules/**,frontend/src/**,*.db,*.code-workspace}"
+        }
+      }
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "web"
+      }
+    }
+  ]
 }

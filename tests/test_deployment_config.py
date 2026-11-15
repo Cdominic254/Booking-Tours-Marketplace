@@ -14,15 +14,26 @@ def test_vercel_config_builds_frontend_and_includes_flask_assets():
     config = json.loads((PROJECT_ROOT / 'vercel.json').read_text())
 
     assert config['$schema'] == 'https://openapi.vercel.sh/vercel.json'
-    assert config['framework'] is None
-    assert config['buildCommand'] == 'npm --prefix frontend ci && npm --prefix frontend run build'
-    function = config['functions']['app.py']
+
+    # Vercel rejects top-level build and function settings once services are in
+    # use, so the Flask app owns the build for the whole deployment.
+    service = config['services']['web']
+    assert service['root'] == '.'
+    assert service['framework'] == 'flask'
+    assert service['buildCommand'] == 'npm --prefix frontend ci && npm --prefix frontend run build'
+    function = service['functions']['app.py']
     assert function['maxDuration'] == 60
     assert function['includeFiles'] == (
         '{frontend/dist/**,images/**,pictures/**,saas/**,logo.svg}'
     )
     for excluded in ('tests/**', 'docs/**', 'frontend/node_modules/**', 'frontend/src/**', '*.db'):
         assert excluded in function['excludeFiles']
+
+    # Services stay internal until a top-level rewrite routes public traffic to
+    # them, so the catch-all rule is what makes the site reachable at all.
+    assert config['rewrites'] == [
+        {'source': '/(.*)', 'destination': {'service': 'web'}}
+    ]
 
 
 def test_vercel_ignore_excludes_secrets_and_ephemeral_data():
