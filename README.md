@@ -1,5 +1,7 @@
 # kenyaBook
 
+**Live application:** [booking-tours-marketplace.vercel.app](https://booking-tours-marketplace.vercel.app) - tours, safaris, and stays across ten Kenyan destinations.
+
 Booking and tour-management website for Kenya-wide travel, trading as **kenyaBook** at [kenyabook.com](https://kenyabook.com). **SafariNaStay** is the official brand slogan and social media identity (`@safarinasstay` on Instagram, Facebook, X, TikTok and YouTube). Lamu is one of eight bookable destinations (alongside Mombasa, Diani, Watamu, Nairobi, Lake Naivasha, the Maasai Mara, and Amboseli) rather than the subject of the whole site. Flask provides the API and production server, while the React/Vite frontend is built into `frontend/dist` for deployment.
 
 ## Features
@@ -79,7 +81,7 @@ The test suite covers authentication rate limits, CSRF protection, access contro
 
 ## Vercel Deployment
 
-Connect this GitHub repository to Vercel with the repository root as the project root, which also gives every push and pull request its own preview URL. `vercel.json` declares a single `web` service with its root at `.`: it builds the Vite frontend, sets a 60-second function timeout, and bundles `frontend/dist`, `images`, `pictures`, `saas`, and `logo.svg` with the Flask function in `app.py` while excluding tests, docs, local databases, and `frontend/node_modules`/`frontend/src` from the bundle. A catch-all `rewrites` rule sends every request to that service, because services stay internal until a top-level rewrite routes public traffic to them. Build and function settings live inside the service rather than at the top level, which Vercel rejects once `services` is present. Python 3.12 is pinned by `.python-version`.
+Production runs at [https://booking-tours-marketplace.vercel.app](https://booking-tours-marketplace.vercel.app), built and promoted from the `Booking-Tours-Marketplace` branch. Connect this GitHub repository to Vercel with the repository root as the project root, which also gives every push and pull request its own preview URL. `vercel.json` declares a single `web` service with its root at `.`: it builds the Vite frontend, sets a 60-second function timeout, and bundles `frontend/dist`, `images`, `pictures`, `saas`, and `logo.svg` with the Flask function in `app.py` while excluding tests, docs, local databases, and `frontend/node_modules`/`frontend/src` from the bundle. A catch-all `rewrites` rule sends every request to that service, because services stay internal until a top-level rewrite routes public traffic to them. Build and function settings live inside the service rather than at the top level, which Vercel rejects once `services` is present. Python 3.12 is pinned by `.python-version`.
 
 Configure these production and preview environment variables in the Vercel project settings:
 
