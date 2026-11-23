@@ -98,6 +98,7 @@ def save_booking(booking):
         commission_rate=float(booking.get('commission_rate', 15) or 15),
         traffic_source=booking.get('traffic_source', 'Unattributed'),
         payment_status=booking.get('payment_status', 'pending'),
+        payment_method=booking.get('payment_method', 'paystack'),
         refund_status=booking.get('refund_status', 'none'),
         status=booking.get('status', 'requested'),
         created_at=datetime.fromisoformat(booking['timestamp'][:-1])

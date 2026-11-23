@@ -114,7 +114,7 @@ def test_review_submissions_are_rate_limited_for_anonymous_visitors(application_
 
 
 def test_booking_checkout_creation_is_rate_limited(application_client, monkeypatch):
-    monkeypatch.setattr(application, 'is_daraja_configured', lambda: False)
+    monkeypatch.setattr(application, 'is_paystack_configured', lambda: False)
     responses = [
         application_client.post(
             '/booking-confirmation',

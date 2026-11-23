@@ -1,5 +1,8 @@
 """Monthly partner subscriptions and the lower commission they unlock."""
 
+import hashlib
+import hmac
+import json
 import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -17,28 +20,6 @@ def _future_start(days=8):
     ).replace(second=0, microsecond=0)
 
 
-def _mock_stk_push(phone_number, amount, booking_id):
-    return {
-        'checkout_request_id': f'ws_CO_{booking_id}',
-        'merchant_request_id': f'merchant_{booking_id}',
-        'customer_message': 'STK prompt sent.',
-    }
-
-
-def _callback(payment, result_code=0, metadata=None):
-    stk = {
-        'MerchantRequestID': payment.merchant_request_id,
-        'CheckoutRequestID': payment.checkout_request_id,
-        'ResultCode': result_code,
-        'ResultDesc': 'The service request is processed.',
-    }
-    if metadata is not None:
-        stk['CallbackMetadata'] = {
-            'Item': [{'Name': key, 'Value': value} for key, value in metadata.items()],
-        }
-    return {'Body': {'stkCallback': stk}}
-
-
 def _subscribe(vendor_id, days=10, business_types='tours'):
     with application.app.app_context():
         vendor = application.db.session.get(application.VendorAccount, vendor_id)
@@ -54,10 +35,15 @@ def _subscribe(vendor_id, days=10, business_types='tours'):
 @pytest.fixture
 def operator(monkeypatch):
     """A tour operator with one bookable departure, plus its signed-in portal."""
-    monkeypatch.setattr(application, 'is_daraja_configured', lambda: True)
+    monkeypatch.setattr(application, 'is_paystack_configured', lambda: True)
     monkeypatch.setattr(application, 'send_booking_confirmation', lambda booking, **kwargs: True)
     monkeypatch.setattr(application, 'send_booking_status_notification', lambda booking, **kwargs: True)
-    monkeypatch.setattr(application, 'initiate_stk_push', _mock_stk_push)
+    monkeypatch.setattr(application, 'initialize_paystack_transaction', lambda **kwargs: {
+        'reference': kwargs['reference'],
+        'authorization_url': 'https://checkout.paystack.com/subscription-test',
+        'access_code': 'access_test',
+        'customer_message': 'Continue to Paystack.',
+    })
 
     email = f'subscription-vendor-{uuid.uuid4().hex}@example.test'
     slug = f'subscription-tour-{uuid.uuid4().hex}'
@@ -187,8 +173,7 @@ def book_tour(operator, guest, guests=2):
     response = guest['client'].post('/booking-confirmation', json={
         'name': 'Subscription Guest',
         'email': guest['email'],
-        'country_code': '+254',
-        'phone': '712345678',
+        'contact_phone': '+254 712 345 678',
         'tour': operator['slug'],
         'schedule_id': operator['schedule_id'],
         'guests': guests,
@@ -243,55 +228,53 @@ def test_only_tour_and_safari_operators_get_the_subscriber_rate(operator):
         assert quote['host_commission'] == 200
 
 
-def test_vendor_renews_with_mpesa_and_the_lower_rate_applies(operator, monkeypatch, admin_client):
+def test_vendor_renews_with_paystack_and_the_lower_rate_applies(operator, monkeypatch, admin_client):
     with application.app.app_context():
         assert application.vendor_has_operator_subscription(operator['vendor_id']) is False
 
     response = operator['client'].post(
         '/api/vendor/subscription/renew',
-        json={'country_code': '+254', 'phone': '712345678'},
+        json={'payment_method': 'paystack'},
         headers=operator['headers'],
     )
     assert response.status_code == 202, response.get_json()
-    reference = response.get_json()['payment_reference']
+    result = response.get_json()
+    reference = result['payment_reference']
+    assert result['authorization_url'] == 'https://checkout.paystack.com/subscription-test'
 
     with application.app.app_context():
         payment = application.VendorSubscriptionPayment.query.filter_by(
             vendor_id=operator['vendor_id']
         ).one()
         assert payment.status == 'pending'
+        assert payment.payment_method == 'paystack'
         assert payment.amount == 2500
-        assert payment.phone == '254712345678'
-        assert payment.checkout_request_id == f'ws_CO_SUB{payment.id}'
+        assert payment.paystack_reference
         assert application.db.session.get(
             application.VendorAccount, operator['vendor_id']
         ).subscription_status == 'inactive'
+        transaction = {
+            'reference': payment.paystack_reference,
+            'status': 'success',
+            'currency': 'KES',
+            'amount': int(round(payment.amount)) * 100,
+            'channel': 'card',
+        }
+        paystack_reference = payment.paystack_reference
+    monkeypatch.setattr(application, 'verify_paystack_transaction', lambda reference: transaction)
 
-    monkeypatch.setattr(application, 'query_stk_push', lambda checkout_id: {
-        'ResponseCode': '0',
-        'ResultCode': '0',
-        'CheckoutRequestID': checkout_id,
-    })
-    with application.app.app_context():
-        payment = application.VendorSubscriptionPayment.query.filter_by(
-            vendor_id=operator['vendor_id']
-        ).one()
-        callback = _callback(payment, metadata={
-            'Amount': 2500,
-            'PhoneNumber': 254712345678,
-            'MpesaReceiptNumber': 'QK12ABC34D',
-        })
-
-    assert application.app.test_client().post(
-        '/daraja/callback', json=callback
-    ).status_code == 204
+    callback = operator['client'].get(
+        '/paystack/callback', query_string={'reference': paystack_reference}
+    )
+    assert callback.status_code == 302
+    assert callback.headers['Location'].startswith('/partner/dashboard?')
 
     with application.app.app_context():
         payment = application.VendorSubscriptionPayment.query.filter_by(
             vendor_id=operator['vendor_id']
         ).one()
         assert payment.status == 'paid'
-        assert payment.mpesa_receipt_number == 'QK12ABC34D'
+        assert payment.payment_channel == 'card'
         assert payment.period_start is not None
         assert (payment.period_end - payment.period_start) == timedelta(days=30)
 
@@ -309,8 +292,10 @@ def test_vendor_renews_with_mpesa_and_the_lower_rate_applies(operator, monkeypat
     assert subscription['eligible'] is True
     assert subscription['host_commission_rate'] == 2.5
     assert subscription['monthly_fee'] == 2500.0
+    assert subscription['payment_methods'] == {'paystack': True}
     assert subscription['payments'][0]['reference'] == reference
     assert subscription['payments'][0]['status'] == 'paid'
+    assert subscription['payments'][0]['payment_method'] == 'paystack'
 
     admin, admin_headers = admin_client
     operations = admin.get('/api/admin/operations').get_json()
@@ -318,11 +303,33 @@ def test_vendor_renews_with_mpesa_and_the_lower_rate_applies(operator, monkeypat
     assert operations['analytics']['active_subscriptions'] >= 1
 
 
+def test_subscription_renewal_rejects_mpesa_and_missing_configuration(operator, monkeypatch):
+    invalid = operator['client'].post(
+        '/api/vendor/subscription/renew',
+        json={'payment_method': 'mpesa'},
+        headers=operator['headers'],
+    )
+    assert invalid.status_code == 400
+    assert invalid.get_json()['error'] == 'Paystack is the only supported payment method.'
+
+    monkeypatch.setattr(application, 'is_paystack_configured', lambda: False)
+    unavailable = operator['client'].post(
+        '/api/vendor/subscription/renew',
+        json={'payment_method': 'paystack'},
+        headers=operator['headers'],
+    )
+    assert unavailable.status_code == 503
+    with application.app.app_context():
+        assert application.VendorSubscriptionPayment.query.filter_by(
+            vendor_id=operator['vendor_id']
+        ).count() == 0
+
+
 def test_renewal_rejects_non_operators_and_missing_csrf(operator):
     _subscribe(operator['vendor_id'], business_types='accommodation')
     response = operator['client'].post(
         '/api/vendor/subscription/renew',
-        json={'country_code': '+254', 'phone': '712345678'},
+        json={'payment_method': 'paystack'},
         headers=operator['headers'],
     )
     assert response.status_code == 400
@@ -334,7 +341,7 @@ def test_renewal_rejects_non_operators_and_missing_csrf(operator):
         application.db.session.commit()
     response = operator['client'].post(
         '/api/vendor/subscription/renew',
-        json={'country_code': '+254', 'phone': '712345678'},
+        json={'payment_method': 'paystack'},
     )
     assert response.status_code == 403
 
@@ -344,30 +351,38 @@ def test_renewal_rejects_non_operators_and_missing_csrf(operator):
         ).count() == 0
 
 
-def test_subscription_callback_rejects_a_mismatched_amount(operator, monkeypatch):
+def test_subscription_webhook_rejects_a_mismatched_amount(operator, monkeypatch):
     operator['client'].post(
         '/api/vendor/subscription/renew',
-        json={'country_code': '+254', 'phone': '712345678'},
+        json={'payment_method': 'paystack'},
         headers=operator['headers'],
     )
-    monkeypatch.setattr(application, 'query_stk_push', lambda checkout_id: {
-        'ResponseCode': '0',
-        'ResultCode': '0',
-        'CheckoutRequestID': checkout_id,
-    })
     with application.app.app_context():
         payment = application.VendorSubscriptionPayment.query.filter_by(
             vendor_id=operator['vendor_id']
         ).one()
-        callback = _callback(payment, metadata={
-            'Amount': 100,
-            'PhoneNumber': 254712345678,
-            'MpesaReceiptNumber': 'QK12ABC34D',
-        })
+        transaction = {
+            'reference': payment.paystack_reference,
+            'status': 'success',
+            'currency': 'KES',
+            'amount': 10000,
+            'channel': 'card',
+        }
 
-    assert application.app.test_client().post(
-        '/daraja/callback', json=callback
-    ).status_code == 400
+    raw_body = json.dumps(
+        {'event': 'charge.success', 'data': transaction}, separators=(',', ':')
+    ).encode()
+    signature = hmac.new(
+        b'sk_test_subscription_secret', raw_body, hashlib.sha512
+    ).hexdigest()
+    monkeypatch.setenv('PAYSTACK_SECRET_KEY', 'sk_test_subscription_secret')
+    response = application.app.test_client().post(
+        '/paystack/webhook',
+        data=raw_body,
+        content_type='application/json',
+        headers={'x-paystack-signature': signature},
+    )
+    assert response.status_code == 400
 
     with application.app.app_context():
         payment = application.VendorSubscriptionPayment.query.filter_by(
@@ -416,3 +431,161 @@ def test_admin_can_comp_and_end_a_subscription(operator, admin_client):
         json={'action': 'pause'},
         headers=headers,
     ).status_code == 400
+
+
+def test_vendor_renews_with_paystack_and_duplicate_webhooks_do_not_extend_twice(operator, monkeypatch):
+    monkeypatch.setattr(application, 'is_paystack_configured', lambda: True)
+    captured = {}
+
+    def initialize(**kwargs):
+        captured.update(kwargs)
+        return {
+            'reference': kwargs['reference'],
+            'authorization_url': 'https://checkout.paystack.com/subscription-test',
+            'access_code': 'access_test',
+            'customer_message': 'Continue to Paystack.',
+        }
+
+    monkeypatch.setattr(application, 'initialize_paystack_transaction', initialize)
+    response = operator['client'].post(
+        '/api/vendor/subscription/renew',
+        json={'payment_method': 'paystack'},
+        headers=operator['headers'],
+    )
+    assert response.status_code == 202, response.get_json()
+    result = response.get_json()
+    assert result['authorization_url'] == 'https://checkout.paystack.com/subscription-test'
+
+    with application.app.app_context():
+        payment = application.VendorSubscriptionPayment.query.filter_by(
+            vendor_id=operator['vendor_id']
+        ).one()
+        assert payment.payment_method == 'paystack'
+        assert payment.paystack_reference == captured['reference']
+        assert payment.status == 'pending'
+        assert captured['email'] == application.db.session.get(
+            application.VendorAccount, operator['vendor_id']
+        ).email
+        transaction = {
+            'reference': payment.paystack_reference,
+            'status': 'success',
+            'currency': 'KES',
+            'amount': int(round(payment.amount)) * 100,
+            'channel': 'bank_transfer',
+        }
+        payment_reference = payment.reference
+
+    raw_body = json.dumps(
+        {'event': 'charge.success', 'data': transaction}, separators=(',', ':')
+    ).encode()
+    signature = hmac.new(
+        b'sk_test_subscription_secret', raw_body, hashlib.sha512
+    ).hexdigest()
+    monkeypatch.setenv('PAYSTACK_SECRET_KEY', 'sk_test_subscription_secret')
+    webhook_client = application.app.test_client()
+    for _ in range(2):
+        webhook = webhook_client.post(
+            '/paystack/webhook',
+            data=raw_body,
+            content_type='application/json',
+            headers={'x-paystack-signature': signature},
+        )
+        assert webhook.status_code == 204
+
+    with application.app.app_context():
+        payment = application.VendorSubscriptionPayment.query.filter_by(
+            reference=payment_reference
+        ).one()
+        assert payment.status == 'paid'
+        assert payment.payment_channel == 'bank_transfer'
+        assert (payment.period_end - payment.period_start) == timedelta(days=30)
+        period_end = payment.period_end
+        vendor = application.db.session.get(application.VendorAccount, operator['vendor_id'])
+        assert vendor.subscription_is_active() is True
+        assert vendor.subscription_renews_at == period_end
+
+    status = operator['client'].get(
+        f'/api/vendor/subscription/status/{payment_reference}'
+    )
+    assert status.status_code == 200
+    assert status.get_json()['payment']['payment_method'] == 'paystack'
+    assert status.get_json()['subscription']['payment_methods']['paystack'] is True
+
+
+def test_subscription_status_reconciles_an_aged_pending_payment(operator, monkeypatch):
+    response = operator['client'].post(
+        '/api/vendor/subscription/renew',
+        json={'payment_method': 'paystack'},
+        headers=operator['headers'],
+    )
+    assert response.status_code == 202, response.get_json()
+    payment_reference = response.get_json()['payment_reference']
+    with application.app.app_context():
+        payment = application.VendorSubscriptionPayment.query.filter_by(
+            reference=payment_reference
+        ).one()
+        payment.created_at = datetime.utcnow() - timedelta(minutes=20)
+        transaction = {
+            'reference': payment.paystack_reference,
+            'status': 'success',
+            'currency': 'KES',
+            'amount': int(round(payment.amount)) * 100,
+            'channel': 'card',
+        }
+        application.db.session.commit()
+    monkeypatch.setattr(
+        application, 'verify_paystack_transaction', lambda reference: transaction
+    )
+
+    status = operator['client'].get(
+        f'/api/vendor/subscription/status/{payment_reference}'
+    )
+
+    assert status.status_code == 200
+    assert status.get_json()['payment']['status'] == 'paid'
+    assert status.get_json()['subscription']['is_active'] is True
+
+
+def test_renewal_reconciles_an_aged_failed_payment_before_blocking(operator, monkeypatch):
+    first = operator['client'].post(
+        '/api/vendor/subscription/renew',
+        json={'payment_method': 'paystack'},
+        headers=operator['headers'],
+    )
+    assert first.status_code == 202, first.get_json()
+    with application.app.app_context():
+        payment = application.VendorSubscriptionPayment.query.filter_by(
+            reference=first.get_json()['payment_reference']
+        ).one()
+        payment.created_at = datetime.utcnow() - timedelta(minutes=20)
+        transaction = {
+            'reference': payment.paystack_reference,
+            'status': 'failed',
+            'currency': 'KES',
+            'amount': int(round(payment.amount)) * 100,
+            'channel': 'card',
+        }
+        first_id = payment.id
+        application.db.session.commit()
+    verified = []
+
+    def verify(reference):
+        verified.append(reference)
+        return transaction
+
+    monkeypatch.setattr(application, 'verify_paystack_transaction', verify)
+    second = operator['client'].post(
+        '/api/vendor/subscription/renew',
+        json={'payment_method': 'paystack'},
+        headers=operator['headers'],
+    )
+
+    assert second.status_code == 202, second.get_json()
+    assert verified == [transaction['reference']]
+    with application.app.app_context():
+        payments = application.VendorSubscriptionPayment.query.filter_by(
+            vendor_id=operator['vendor_id']
+        ).order_by(application.VendorSubscriptionPayment.id).all()
+        assert [(payment.id, payment.status) for payment in payments] == [
+            (first_id, 'failed'), (payments[1].id, 'pending'),
+        ]

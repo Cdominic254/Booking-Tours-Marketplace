@@ -7,7 +7,6 @@ const backendPaths = [
   '/api',
   '/booking-confirmation',
   '/contact-submit',
-  '/daraja',
   '/dashboard',
   '/images',
   '^/login(?:/|$)',
@@ -20,6 +19,7 @@ const backendPaths = [
   '/reviews',
   '/vendor',
   '/partner',
+  '/paystack',
 ];
 
 export default defineConfig({

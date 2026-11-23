@@ -824,7 +824,7 @@ function PropertyInventorySection({ properties, basePath, csrfToken }) {
   }
 
   return (
-    <SectionCard title="Room inventory and availability" description="Set your room types, nightly rates and how many units stay open each night. Nights are held while an M-Pesa payment is confirmed and released if it fails.">
+    <SectionCard title="Room inventory and availability" description="Set your room types, nightly rates and how many units stay open each night. Nights are held while a payment is confirmed and released if it fails.">
       <Notice error>{error}</Notice><Notice>{message}</Notice>
       {properties.length === 0
         ? <p className="rounded-xl bg-[#f5f3ed] p-4 text-sm text-[#52615b]">Add an accommodation property first, then publish its rooms here.</p>
@@ -855,7 +855,6 @@ function PropertyInventorySection({ properties, basePath, csrfToken }) {
 }
 
 function VendorSubscriptionSection({ subscription, csrfToken, onRenewed }) {
-  const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [pendingReference, setPendingReference] = useState('');
@@ -866,8 +865,18 @@ function VendorSubscriptionSection({ subscription, csrfToken, onRenewed }) {
   const subscriberRate = Number(subscription?.subscriber_host_commission_rate ?? 2.5);
   const monthlyFee = Number(subscription?.monthly_fee ?? 2500);
   const payments = subscription?.payments || [];
+  const paystackConfigured = Boolean(subscription?.payment_methods?.paystack);
+  const returnedReference = new URLSearchParams(window.location.search).get('reference') || '';
+  const paystackReturned = new URLSearchParams(window.location.search).get('paystack') === 'returned';
 
-  // A confirmed STK payment lands a few seconds after the prompt, so poll the
+  useEffect(() => {
+    if (!paystackReturned || !returnedReference) return undefined;
+    setPendingReference(returnedReference);
+    setMessage('Checking your Paystack payment…');
+    return undefined;
+  }, [paystackReturned, returnedReference]);
+
+  // Provider callbacks usually land a few seconds after checkout, so poll the
   // one payment we started instead of reloading the whole dashboard.
   useEffect(() => {
     if (!pendingReference) return undefined;
@@ -882,7 +891,7 @@ function VendorSubscriptionSection({ subscription, csrfToken, onRenewed }) {
         } else if (result.payment.status === 'failed') {
           window.clearInterval(timer);
           setPendingReference('');
-          setError('That M-Pesa payment was not completed. Try again when you are ready.');
+          setError('That Paystack payment was not completed. Try again when you are ready.');
         }
       } catch {
         // Keep waiting; the next tick retries the status check.
@@ -895,20 +904,29 @@ function VendorSubscriptionSection({ subscription, csrfToken, onRenewed }) {
     event.preventDefault();
     setError('');
     setMessage('');
+    if (!paystackConfigured) {
+      setError('Online payments are not configured right now. Contact support before renewing.');
+      return;
+    }
     setBusy(true);
     try {
       const result = await apiRequest('/api/vendor/subscription/renew', {
         method: 'POST',
-        data: { country_code: '+254', phone },
+        data: { payment_method: 'paystack' },
         csrfToken,
       });
-      if (result.payment_pending) {
-        // The prompt may or may not have arrived; the reference is the trail.
-        setMessage(result.message);
-      } else {
-        if (result.payment_reference) setPendingReference(result.payment_reference);
-        setMessage(result.message || 'Approve the M-Pesa prompt on your phone to renew.');
+      if (result.authorization_url) {
+        const checkout = new URL(result.authorization_url);
+        if (checkout.protocol !== 'https:' || checkout.hostname !== 'checkout.paystack.com') {
+          throw new Error('The payment checkout URL was not valid.');
+        }
+        window.location.assign(checkout.toString());
+        return;
       }
+      if (result.payment_reference) {
+        setPendingReference(result.payment_reference);
+      }
+      setMessage(result.message || 'Continue to the secure Paystack checkout to renew.');
     } catch (renewError) {
       setError(messageFrom(renewError));
     } finally {
@@ -941,23 +959,22 @@ function VendorSubscriptionSection({ subscription, csrfToken, onRenewed }) {
             </div>
           </div>
           <form className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end" onSubmit={renew}>
-            <label className="block">
-              <span className="field-label">M-Pesa phone for the KSh {formatNumber(monthlyFee)} payment</span>
-              <input className="field" inputMode="numeric" onChange={(event) => setPhone(event.target.value)} placeholder="712 345 678" required type="tel" value={phone} />
-            </label>
-            <button className="rounded-full bg-[#203b35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#31554b] disabled:opacity-60" disabled={busy || Boolean(pendingReference)} type="submit">
-              {pendingReference ? 'Waiting for M-Pesa…' : busy ? 'Sending request…' : active ? 'Renew for another 30 days' : 'Subscribe for 30 days'}
+            <p className="rounded-xl bg-[#f5f3ed] p-3 text-xs leading-5 text-[#52615b]">Paystack will use your partner account email and open its secure hosted checkout.</p>
+            <button className="rounded-full bg-[#203b35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#31554b] disabled:opacity-60" disabled={busy || Boolean(pendingReference) || !paystackConfigured} type="submit">
+              {pendingReference ? 'Waiting for payment confirmation…' : busy ? 'Sending request…' : active ? 'Renew for another 30 days' : 'Subscribe for 30 days'}
             </button>
           </form>
+          {!paystackConfigured && <p className="rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">No online payment methods are configured right now. Contact support to renew.</p>}
           <p className="text-xs text-[#52615b]">Subscriptions are prepaid: each confirmed payment adds 30 days, and the lower commission applies to bookings taken while the subscription is live.</p>
           {payments.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[480px] border-collapse text-left text-sm">
-                <thead><tr className="border-b border-[#e9e5db] text-[#52615b]">{['Started', 'Amount', 'Covers', 'Status'].map((label) => <th className="px-3 py-2 font-semibold" key={label}>{label}</th>)}</tr></thead>
+              <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+                <thead><tr className="border-b border-[#e9e5db] text-[#52615b]">{['Started', 'Amount', 'Method', 'Covers', 'Status'].map((label) => <th className="px-3 py-2 font-semibold" key={label}>{label}</th>)}</tr></thead>
                 <tbody>{payments.map((payment) => (
                   <tr className="border-b border-[#f0ede6] text-[#52615b]" key={payment.id}>
                     <td className="px-3 py-2">{formatDate(payment.paid_at || payment.created_at)}</td>
                     <td className="px-3 py-2">KSh {formatNumber(payment.amount)}</td>
+                    <td className="px-3 py-2">{payment.payment_method === 'paystack' ? 'Paystack' : 'M-Pesa'}</td>
                     <td className="px-3 py-2">{payment.period_start ? `${formatDate(payment.period_start)} – ${formatDate(payment.period_end)}` : '—'}</td>
                     <td className="px-3 py-2 capitalize">{payment.status}</td>
                   </tr>

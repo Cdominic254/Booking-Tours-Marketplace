@@ -43,7 +43,7 @@ const navigationAliases = {
 };
 const legacyTourSlugs = ['dhow', 'old-town', 'sandbank', 'fishing', 'cultural', 'water-sports', 'day-trips'];
 const fallbackImage = '/images/Spiritedpursuit_leelitumbe-106_lamu_kenya.webp';
-const emptyCatalogue = { tours: [], properties: [], services: [], operators: [], destinations: [] };
+const emptyCatalogue = { tours: [], properties: [], services: [], operators: [], destinations: [], payments: {} };
 const WHATSAPP_GREETING = "Hello, I'm planning a trip to Kenya and would like some information.";
 const CONTACT_PHONE_DISPLAY = '+254 704 143 718';
 const CONTACT_PHONE_HREF = 'tel:+254704143718';
@@ -2719,9 +2719,9 @@ const FAQ_GROUPS = [
     title: 'Bookings and payments',
     description: 'How reserving, paying and confirming works.',
     items: [
-      ['How do I book a tour or a place to stay?', 'Open a tour and pick one of its published departure dates, or open an accommodation and choose your check-in and check-out dates. Send the request and you will get the next step by M-Pesa prompt or WhatsApp, depending on where you are booking from.'],
-      ['How do I pay?', 'Kenyan guests pay in shillings through a secure M-Pesa prompt sent to their phone. International travellers are contacted on WhatsApp to confirm availability and arrange payment. Nothing is charged until you approve it.'],
-      ['When is my booking confirmed?', 'A booking is confirmed only once payment has been verified or, for international requests, once our team has confirmed availability in writing. A request on its own does not hold a date or a room.'],
+      ['How do I book a tour or a place to stay?', 'Open a tour and pick one of its published departure dates, or open an accommodation and choose your check-in and check-out dates. Send the booking and continue to the secure Paystack checkout.'],
+      ['How do I pay?', 'Guests in Kenya and around the world pay in Kenyan shillings through the hosted Paystack checkout. Nothing is charged until you approve it.'],
+      ['When is my booking confirmed?', 'A booking is confirmed only once Paystack verifies successful payment. Until then, the selected departure seats or room nights remain reserved for your pending payment.'],
       ['What does the price include?', 'Each listing states what is included: guide fees, park entries, meals, transfers and so on. Anything not listed, such as drinks, tips or park fees where noted, is paid separately.'],
       ['Can I cancel or change a booking?', 'A paid booking can be cancelled from your account up to 48 hours before the start time for a full refund. Inside 48 hours, message us and we will speak to the operator or host on your behalf.'],
       ['Are prices in shillings or dollars?', 'Prices are published in Kenyan shillings and can be shown in other currencies using the currency selector. The amount charged is always settled in shillings.'],
@@ -3299,10 +3299,10 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
   const [stayRoomsLoading, setStayRoomsLoading] = useState(false);
   const [stayRoomsError, setStayRoomsError] = useState('');
   const [roomId, setRoomId] = useState('');
-  const [stayQuoteUrl, setStayQuoteUrl] = useState('');
   const [language, setLanguage] = useState(documentLanguage());
   const [travelerType, setTravelerType] = useState(currency.code === 'KES' ? 'domestic' : 'international');
   const [travelerChoiceTouched, setTravelerChoiceTouched] = useState(false);
+  const paystackConfigured = Boolean(catalogue.payments?.paystack);
   const allOptions = [
     ...catalogue.tours.map((tour) => ({ ...tour, kind: 'tour', price: tour.price })),
     ...catalogue.properties.map((property) => ({ ...property, kind: 'stay', price: property.price_per_night })),
@@ -3425,87 +3425,28 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
         setSubmitError('Choose a check-out date after check-in.');
         return;
       }
-      setStayQuoteUrl('');
-      if (travelerType === 'domestic') {
-        if (!selectedRoom) {
-          setSubmitError('Choose an available room for these dates.');
-          return;
-        }
-        if (!selectedRoom.is_available) {
-          setSubmitError('Those dates are no longer available. Pick another room or different dates.');
-          return;
-        }
-        data.booking_type = 'property';
-        data.room_id = String(selectedRoom.id);
-        data.check_in = checkInDate;
-        data.check_out = checkOutDate;
-      } else {
-        const dateLabel = (date) => new Date(`${date}T12:00:00`).toLocaleDateString(language === 'sw' ? 'sw-KE' : 'en-KE');
-        const details = String(data.message || '').trim();
-        const contactLines = [
-          `Traveler: ${data.name} (International traveler from ${data.country_of_residence})`,
-          `Email: ${data.email}`,
-          `Phone: ${data.international_phone}`,
-        ];
-        const message = language === 'sw'
-          ? [
-            'Habari kenyaBook, tafadhali thibitisheni malazi haya:',
-            ...contactLines,
-            `Malazi: ${selectedListing.name} (${selectedListing.location})`,
-            `Kuingia: ${dateLabel(checkInDate)}`,
-            `Kutoka: ${dateLabel(checkOutDate)} (${stayNights} usiku)`,
-            `Wageni: ${guests}`,
-            `Jumla ndogo: ${formatKenyanShillings(total)}`,
-            `Ada ya huduma (${guestServiceFeeRate}%): ${formatKenyanShillings(serviceFee)}`,
-            `Ada ya uhifadhi: ${formatKenyanShillings(bookingFee)}`,
-            `Jumla inayolipwa: ${formatKenyanShillings(payableTotal)}`,
-            ...(details ? [`Maelezo: ${details}`] : []),
-            'Tafadhali thibitisheni nafasi na mtumie hatua za malipo ya kimataifa. Nafasi haitahifadhiwa hadi mthibitisho.',
-          ].join('\n')
-          : [
-            'Hello kenyaBook, please confirm this accommodation before I pay:',
-            ...contactLines,
-            `Accommodation: ${selectedListing.name} (${selectedListing.location})`,
-            `Check-in: ${dateLabel(checkInDate)}`,
-            `Check-out: ${dateLabel(checkOutDate)} (${stayNights} ${stayNights === 1 ? 'night' : 'nights'})`,
-            `Guests: ${guests}`,
-            `Accommodation subtotal: ${formatKenyanShillings(total)}`,
-            `Service fee (${guestServiceFeeRate}%): ${formatKenyanShillings(serviceFee)}`,
-            `Booking fee: ${formatKenyanShillings(bookingFee)}`,
-            `Total including service fee: ${formatKenyanShillings(payableTotal)}`,
-            ...(details ? [`Notes: ${details}`] : []),
-            'Please confirm availability and share international payment options. I understand this request does not hold the accommodation until confirmed.',
-          ].join('\n');
-        setStayQuoteUrl(whatsappUrl(message, catalogue.whatsapp_business_phone));
+      if (!selectedRoom) {
+        setSubmitError('Choose an available room for these dates.');
         return;
       }
+      if (!selectedRoom.is_available) {
+        setSubmitError('Those dates are no longer available. Pick another room or different dates.');
+        return;
+      }
+      data.booking_type = 'property';
+      data.room_id = String(selectedRoom.id);
+      data.check_in = checkInDate;
+      data.check_out = checkOutDate;
     }
-    if (travelerType === 'international') {
-      const dateLabel = selectedSchedule
-        ? `${selectedSchedule.starts_at.slice(0, 10)} at ${selectedSchedule.starts_at.slice(11, 16)} Kenya time`
-        : `${data.date} at ${data.time} Kenya time`;
-      const details = String(data.message || '').trim();
-      const message = [
-        'Hello kenyaBook, I am an international traveler and would like to arrange this booking:',
-        `Name: ${data.name}`,
-        `Email: ${data.email}`,
-        `Country: ${data.country_of_residence}`,
-        `Phone/WhatsApp: ${data.international_phone}`,
-        `Experience: ${selectedListing?.name || data.tour}`,
-        `Preferred departure: ${dateLabel}`,
-        `Guests: ${guests}`,
-        `Subtotal: ${formatKenyanShillings(total)}`,
-        `Service fee (${guestServiceFeeRate}%): ${formatKenyanShillings(serviceFee)}`,
-        `Booking fee: ${formatKenyanShillings(bookingFee)}`,
-        `Total including service fee: ${formatKenyanShillings(payableTotal)}${currency.code !== 'KES' ? ` (approximately ${formatPrice(payableTotal, currency)})` : ''}`,
-        ...(details ? [`Notes: ${details}`] : []),
-        'Please confirm availability and share international payment options. I understand this request does not reserve a place until confirmed.',
-      ].join('\n');
-      window.open(whatsappUrl(message, catalogue.whatsapp_business_phone), '_blank', 'noopener,noreferrer');
+    if (!paystackConfigured) {
+      setSubmitError('Online payments are not configured right now. Please contact our team before booking.');
       return;
     }
-    setStayQuoteUrl('');
     setSubmitting(true);
+    data.payment_method = 'paystack';
+    if (travelerType === 'international') {
+      data.contact_phone = String(data.international_phone || '').trim();
+    }
     if (selectedListing?.kind === 'tour') data.schedule_id = scheduleId;
     try {
       const response = await fetch('/booking-confirmation', {
@@ -3515,10 +3456,18 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Your booking could not be submitted.');
+      if (result.authorization_url) {
+        const checkout = new URL(result.authorization_url);
+        if (checkout.protocol !== 'https:' || checkout.hostname !== 'checkout.paystack.com') {
+          throw new Error('The payment checkout URL was not valid.');
+        }
+        window.location.assign(checkout.toString());
+        return;
+      }
       const emailStatus = result.email_sent ? 'sent' : 'unavailable';
-      const pending = result.payment_pending ? '&pending=true' : '';
+      const pending = response.status === 202 ? '&pending=unknown' : '';
       window.location.assign(
-        `/booking-confirmation.html?booking_id=${result.booking.id}&reference=${encodeURIComponent(result.payment_reference)}&email=${emailStatus}&managed=${result.managed}${pending}`
+        `/booking-confirmation.html?booking_id=${result.booking.id}&reference=${encodeURIComponent(result.payment_reference)}&email=${emailStatus}&managed=${result.managed}&method=paystack${pending}`
       );
     } catch (requestError) {
       setSubmitError(getErrorMessage(requestError));
@@ -3531,7 +3480,7 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
       <PageBanner
         eyebrow={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Uhifadhi wa malazi' : 'Accommodation booking') : 'A few details, then Kenya is closer'}
         title={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Panga malazi yako Kenya.' : 'Plan your accommodation in Kenya.') : 'Let’s bring your Kenyan plans to life.'}
-        description={selectedListing?.kind === 'stay' ? (language === 'sw' ? 'Chagua tarehe zako na chumba, kisha lipa kwa M-Pesa. Wasafiri wa kimataifa wanaweza kuuliza kupitia WhatsApp.' : 'Choose your dates and room, then pay securely with M-Pesa. International travelers can still enquire on WhatsApp.') : travelerType === 'domestic' ? 'Choose an experience and available departure, then confirm your booking securely with M-Pesa.' : 'Choose an experience and departure, then contact our local team to confirm availability and arrange payment.'}
+        description={selectedListing?.kind === 'stay' ? 'Choose your dates and room, then pay securely through Paystack in Kenyan shillings.' : travelerType === 'domestic' ? 'Choose an experience and available departure, then confirm your booking securely with Paystack.' : 'Choose an experience and departure, then continue to secure Paystack checkout from anywhere in the world.'}
       />
       <div className="mx-auto max-w-7xl px-5 pt-10 sm:px-8 sm:pt-14">
         <SmartTripPlanner tours={catalogue.tours} properties={catalogue.properties} destinations={catalogue.destinations} whatsappPhone={catalogue.whatsapp_business_phone} guests={Number(guests) || 1} />
@@ -3539,7 +3488,7 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
       <section className="mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div id="booking-checkout" className="rounded-3xl border border-[#e9e5db] bg-white p-6 shadow-sm sm:p-9">
           <h2 className="display-font text-3xl text-[#203b35]">{selectedListing?.kind === 'stay' ? 'Book your stay' : 'Make it a date with Kenya.'}</h2>
-          <p className="mt-2 text-sm leading-6 text-[#52615b]">{selectedListing?.kind === 'stay' ? 'Pick your dates and room type. We hold those nights while M-Pesa confirms your payment and release them if it does not go through. International travelers can send an enquiry on WhatsApp instead.' : travelerType === 'domestic' ? 'Choose a published departure, tell us who’s coming, and approve the M-Pesa prompt sent to your Kenyan mobile number. Your booking is confirmed after payment is verified.' : 'Share your details with our local team on WhatsApp. We’ll confirm the departure and provide an international payment option.'}</p>
+          <p className="mt-2 text-sm leading-6 text-[#52615b]">{selectedListing?.kind === 'stay' ? 'Pick your dates and room type. We hold those nights while your payment is verified and release them if it does not go through.' : 'Choose a published departure, tell us who’s coming, and continue to Paystack. Your booking is confirmed after payment is verified.'}</p>
           {selectedListing && selectedListing.review_count > 0 && <p className="mt-3 flex flex-wrap items-center gap-2 text-sm font-semibold text-[#203b35]">
             <StarRow rating={selectedListing.rating} />
             <span>{Number(selectedListing.rating).toFixed(1)} / 5</span>
@@ -3547,12 +3496,11 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
           </p>}
           {errorMessage && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{errorMessage}</p>}
           {submitError && <p className="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-800" role="alert">{submitError}</p>}
-          {stayQuoteUrl && <div className="mt-5 rounded-xl bg-[#e9eee8] p-4" role="status"><p className="text-sm text-[#203b35]">Your accommodation request is ready. The host will confirm dates before payment.</p><a className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#177b5b] px-5 text-sm font-semibold text-white hover:bg-[#126448]" href={stayQuoteUrl} target="_blank" rel="noreferrer">{catalogue.whatsapp_business_phone ? 'Message kenyaBook on WhatsApp' : 'Share enquiry in WhatsApp'}</a></div>}
           {loading || error ? <div className="mt-6"><LoadingState error={error} onRetry={retry} /></div> : (
             <form className="mt-7 grid gap-x-5 gap-y-5 sm:grid-cols-2" onSubmit={submitBooking}>
               <label className="sm:col-span-2">
                 <span className="field-label">Tour or accommodation</span>
-                <select className="field" name="tour" value={selected} onChange={(event) => { setSelected(event.target.value); setStayQuoteUrl(''); }} required>
+                <select className="field" name="tour" value={selected} onChange={(event) => setSelected(event.target.value)} required>
                   <option value="">Choose an experience or accommodation</option>
                   {catalogue.tours.length > 0 && <optgroup label="Tours">{catalogue.tours.map((tour) => <option key={tour.slug} value={tour.slug}>{tour.name} — {formatKenyanShillings(tour.price)} / person</option>)}</optgroup>}
                   {catalogue.properties.length > 0 && <optgroup label="Accommodations">{catalogue.properties.map((property) => <option key={property.slug} value={property.slug}>{property.name} — {formatKenyanShillings(property.price_per_night)} / night</option>)}</optgroup>}
@@ -3574,17 +3522,15 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
                     </label>
                   </div>
                 </fieldset>
-                {travelerType === 'domestic' ? <>
-                  <label><span className="field-label">M-Pesa country code</span><input className="field" name="country_code" value="+254" readOnly aria-readonly="true" /></label>
-                  <label><span className="field-label">M-Pesa phone number</span><input className="field" name="phone" type="tel" inputMode="numeric" autoComplete="tel-national" pattern="(?:0?[17][0-9]{8}|254[17][0-9]{8})" title="Enter a Kenyan mobile number, with or without the leading 0 or 254" required /></label>
-                </> : <>
+                {travelerType === 'domestic' ? (
+                  <label className="sm:col-span-2"><span className="field-label">Phone number (include country code)</span><input className="field" name="contact_phone" type="tel" autoComplete="tel" placeholder="For example, +254 712 345 678" required /></label>
+                ) : <>
                   <label><span className="field-label">Country of residence</span><input className="field" name="country_of_residence" autoComplete="country-name" placeholder="For example, United Kingdom" required /></label>
                   <label><span className="field-label">Phone / WhatsApp (include country code)</span><input className="field" name="international_phone" type="tel" autoComplete="tel" placeholder="For example, +44 7700 900123" required /></label>
                 </>}
+                {!paystackConfigured && <p className="rounded-xl bg-red-50 p-4 text-sm text-red-800 sm:col-span-2" role="alert">No online payment methods are configured right now. Contact our team to complete your booking.</p>}
                 <p className="rounded-xl bg-[#e6f0f1] p-4 text-sm leading-6 text-[#365565] sm:col-span-2" role="note">
-                  {travelerType === 'domestic'
-                    ? 'Pay securely with an M-Pesa prompt sent to your Kenyan mobile number.'
-                    : 'We’ll send your details to our team on WhatsApp to confirm availability and arrange an international payment option. Your place is not reserved until we confirm it.'}
+                  Continue to the secure Paystack checkout to complete your payment.
                 </p>
               </>}
               {selectedListing?.kind === 'tour' ? (
@@ -3615,8 +3561,8 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
                 </>
               ) : selectedListing?.kind === 'stay' ? (
                 <>
-                  <label><span className="field-label">Check-in</span><input className="field" name="check_in" type="date" min={todayInKenya()} value={checkInDate} onChange={(event) => { setCheckInDate(event.target.value); setStayQuoteUrl(''); }} required /></label>
-                  <label><span className="field-label">Check-out</span><input className="field" name="check_out" type="date" min={checkInDate} value={checkOutDate} onChange={(event) => { setCheckOutDate(event.target.value); setStayQuoteUrl(''); }} required /></label>
+                  <label><span className="field-label">Check-in</span><input className="field" name="check_in" type="date" min={todayInKenya()} value={checkInDate} onChange={(event) => setCheckInDate(event.target.value)} required /></label>
+                  <label><span className="field-label">Check-out</span><input className="field" name="check_out" type="date" min={checkInDate} value={checkOutDate} onChange={(event) => setCheckOutDate(event.target.value)} required /></label>
                   <div className="sm:col-span-2">
                     <span className="field-label">Room type</span>
                     {stayRoomsLoading && <p className="mt-1 text-sm text-[#52615b]" role="status">Checking room availability…</p>}
@@ -3663,7 +3609,6 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
                     const value = event.target.value;
                     const roomLimit = selectedListing?.kind === 'stay' ? selectedRoom?.guests : null;
                     setGuests(roomLimit && Number(value) > roomLimit ? String(roomLimit) : value);
-                    setStayQuoteUrl('');
                   }}
                   required
                 />
@@ -3699,16 +3644,11 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
                     : language === 'sw'
                       ? 'Chagua chumba kinachopatikana ili kuona jumla ya malazi.'
                       : 'Choose an available room to see the accommodation total.'
-                  : `Charged in Kenyan shillings (KES). Tour prices are per person.${currency.code !== 'KES' ? ` Approximate total in ${currency.code}: ${formatPrice(payableTotal, currency)}.` : ''}`}</p>
+                  : 'Tour prices are per person.'}</p>
+                <p className="mt-1 text-xs text-[#52615b]">Charged in Kenyan shillings (KES).{currency.code !== 'KES' ? ` Approximate total in ${currency.code}: ${formatPrice(payableTotal, currency)}.` : ''}</p>
               </div>
-              <button className="min-h-12 rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38] disabled:opacity-50 sm:col-span-2" type="submit" disabled={submitting || (selectedListing?.kind === 'tour' && (!selectedSchedule || Number(guests) > selectedSchedule.remaining || availabilityLoading)) || (selectedListing?.kind === 'stay' && (stayNights < 1 || (travelerType === 'domestic' && (!selectedRoom || !selectedRoom.is_available))))}>
-                {selectedListing?.kind === 'stay'
-                  ? travelerType === 'domestic'
-                    ? submitting ? 'Opening secure checkout…' : 'Continue to secure payment'
-                    : 'Request availability on WhatsApp'
-                  : travelerType === 'international'
-                    ? 'Continue on WhatsApp to arrange booking'
-                    : submitting ? 'Opening secure checkout…' : 'Continue to secure payment'}
+              <button className="min-h-12 rounded-full bg-[#b96e45] px-6 font-semibold text-white hover:bg-[#a45d38] disabled:opacity-50 sm:col-span-2" type="submit" disabled={submitting || !paystackConfigured || (selectedListing?.kind === 'tour' && (!selectedSchedule || Number(guests) > selectedSchedule.remaining || availabilityLoading)) || (selectedListing?.kind === 'stay' && (stayNights < 1 || !selectedRoom || !selectedRoom.is_available))}>
+                {submitting ? 'Opening secure checkout…' : 'Continue to secure payment'}
               </button>
             </form>
           )}
@@ -3719,7 +3659,7 @@ function BookingPage({ catalogue, loading, error, retry, currency }) {
           <ButtonLink className="mt-5" href="/contact.html">Talk to our team →</ButtonLink>
           <div className="mt-7 border-t border-[#d7dfd5] pt-6 text-sm text-[#52615b]">
             <p className="font-semibold text-[#203b35]">A note about booking</p>
-            <p className="mt-2 leading-6">{selectedListing?.kind === 'stay' ? (travelerType === 'domestic' ? 'Nights are held while M-Pesa verifies your payment. Your stay is confirmed as soon as the payment is verified.' : 'International stay requests are sent to our team on WhatsApp. No nights are held until the team confirms availability and payment arrangements.') : travelerType === 'domestic' ? 'Payments are requested securely through M-Pesa STK Push in Kenyan shillings. Your booking is confirmed only after Daraja verifies successful payment.' : 'International requests are sent to our team on WhatsApp. Your booking is not held until the team confirms availability and payment arrangements.'}</p>
+            <p className="mt-2 leading-6">{selectedListing?.kind === 'stay' ? 'Nights are held while your payment is verified. Your stay is confirmed as soon as the payment is verified.' : 'Payments are requested securely through Paystack in Kenyan shillings. Your booking is confirmed only after Paystack verifies successful payment.'}</p>
           </div>
         </aside>
       </section>
@@ -4137,6 +4077,7 @@ function ConfirmationPage() {
   const emailStatus = params.get('email');
   const isManaged = params.get('managed') === 'true';
   const initiationUnknown = params.get('pending') === 'unknown';
+  const requestedMethod = params.get('method');
   const [payment, setPayment] = useState(null);
   const [paymentError, setPaymentError] = useState('');
 
@@ -4174,6 +4115,8 @@ function ConfirmationPage() {
 
   const paymentIsConfirmed = payment?.payment_status === 'paid';
   const paymentFailed = ['failed', 'cancelled'].includes(payment?.payment_status);
+  const isPaystack = requestedMethod === 'paystack' || payment?.payment_method === 'paystack';
+  const isLegacyMpesa = payment?.payment_method === 'mpesa';
 
   return (
     <PageShell>
@@ -4183,14 +4126,16 @@ function ConfirmationPage() {
           <h1 className="display-font mt-6 text-4xl text-[#203b35]">{paymentIsConfirmed ? 'Your Kenya trip is confirmed.' : 'Your request is in — one step to go.'}</h1>
           <p className="mt-4 leading-7 text-[#52615b]">
             {paymentIsConfirmed
-              ? 'Your M-Pesa payment has been verified. Your trip is booked, and everything you need is right here.'
+              ? 'Your payment has been verified. Your trip is booked, and everything you need is right here.'
               : paymentFailed
-                ? 'The M-Pesa payment was not completed and this booking was not confirmed. You can try booking again.'
-                : 'We’ve received your request. Check your phone for the M-Pesa prompt and enter your PIN to pay. We’ll confirm your booking after Daraja verifies the payment.'}
+                ? 'The payment was not completed and this booking was not confirmed. You can try booking again.'
+                : isPaystack
+                  ? 'We’re verifying your Paystack payment. Your booking will update here automatically.'
+                  : 'We’re checking your payment status. Your booking will update here automatically.'}
           </p>
           {bookingId && <p className="mt-5 rounded-xl bg-[#f5f3ed] p-4 text-sm font-semibold text-[#203b35]">Booking reference: #{bookingId}</p>}
-          {paymentReference && <p className="mt-3 text-sm text-[#52615b]" role="status">{paymentIsConfirmed ? 'Payment status: paid' : paymentFailed ? 'Payment status: not completed' : initiationUnknown ? 'We could not confirm whether the M-Pesa prompt was sent. Check your phone and payment status before trying again.' : 'Waiting for M-Pesa payment confirmation…'}</p>}
-          {payment?.mpesa_receipt_number && <p className="mt-2 text-sm font-semibold text-[#31554b]">M-Pesa receipt: {payment.mpesa_receipt_number}</p>}
+          {paymentReference && <p className="mt-3 text-sm text-[#52615b]" role="status">{paymentIsConfirmed ? 'Payment status: paid' : paymentFailed ? 'Payment status: not completed' : initiationUnknown ? isPaystack ? 'We could not confirm whether the Paystack checkout was created. Check your payment status before trying again.' : 'We could not confirm the payment status. Check with our team before trying again.' : isPaystack ? 'Waiting for Paystack payment confirmation…' : 'Waiting for payment confirmation…'}</p>}
+          {paymentIsConfirmed && payment?.payment_receipt && <p className="mt-2 text-sm font-semibold text-[#31554b]">{isPaystack ? 'Paystack reference:' : isLegacyMpesa ? 'M-Pesa receipt:' : 'Payment reference:'} {payment.payment_receipt}</p>}
           {payment?.document_urls?.invoice && <a className="mt-4 inline-block rounded-full border border-[#31554b] px-4 py-2 text-sm font-semibold text-[#31554b] hover:bg-[#e9eee8]" href={payment.document_urls.invoice}>Download invoice</a>}
           {payment?.document_urls?.receipt && <a className="mt-4 ml-2 inline-block rounded-full border border-[#31554b] px-4 py-2 text-sm font-semibold text-[#31554b] hover:bg-[#e9eee8]" href={payment.document_urls.receipt}>Download receipt</a>}
           {paymentError && <p className="mt-3 text-sm text-[#8a4c2e]" role="status">{paymentError}</p>}
@@ -4198,10 +4143,10 @@ function ConfirmationPage() {
           {emailStatus === 'unavailable' && <p className="mt-4 text-sm text-[#8a4c2e]" role="status">Your booking is saved. Email delivery is not configured right now; keep your booking reference for enquiries.</p>}
           {isManaged && <p className="mt-4 text-sm text-[#52615b]"><a className="font-semibold text-[#9a5534] underline" href="/my-bookings">View or manage this booking</a></p>}
           <div className="mt-8 rounded-2xl bg-[#f5f3ed] p-5 text-left">
-          <h2 className="font-semibold text-[#203b35]">What happens next</h2>
+            <h2 className="font-semibold text-[#203b35]">What happens next</h2>
             <ul className="mt-3 list-inside list-disc space-y-2 text-sm leading-6 text-[#52615b]">
-              <li>Approve the M-Pesa prompt on your phone, if you have not already.</li>
-              <li>Daraja will securely notify us when payment completes.</li>
+              <li>{isPaystack ? 'Complete the secure Paystack checkout, if you have not already.' : 'Contact our team if you need help confirming this payment.'}</li>
+              <li>{isPaystack ? 'Paystack will securely notify us when payment completes.' : 'Our team will confirm the booking after reviewing the payment status.'}</li>
               <li>Your booking status will update here automatically.</li>
               <li>Plans changed? Cancel at least 48 hours ahead in My bookings and we refund the full amount.</li>
               <li>When the trip is over, sign in to My bookings to rate it and write a review.</li>
@@ -4280,7 +4225,7 @@ function CustomerBookingCard({ booking, csrfToken, onChanged }) {
   const refundLabel = { pending: 'Refund due', paid: 'Refund paid', rejected: 'Refund declined' }[booking.refund_status] || '';
   const refundMessage = {
     pending: 'Our team sends refunds manually and will email you as soon as the money is on its way.',
-    paid: 'The refund was sent. Check your M-Pesa statement; it should reflect shortly.',
+    paid: 'The refund was sent. Check your original payment method; it should reflect shortly.',
     rejected: 'This refund was declined. Contact our team if you would like the case reviewed again.',
   }[booking.refund_status] || '';
   const cancellationPrompt = booking.payment_status === 'paid'

@@ -8,7 +8,7 @@ Booking and tour-management website for Kenya-wide travel, trading as **kenyaBoo
 
 - Tour discovery, destination filtering, availability, bookings, and customer booking lookup
 - Admin and partner portals, catalogue management, and reviews
-- Safaricom Daraja M-Pesa STK Push payments
+- Paystack hosted checkout for domestic and international bookings and partner subscriptions
 - Contact submissions, optional email notifications, and currency conversion
 - Bundled destination image assets served from `/images` and `/pictures`
 
@@ -55,15 +55,17 @@ npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
 
-Open the Vite URL printed in the terminal, normally `http://127.0.0.1:5173`. The Vite development server proxies `/api`, authentication, booking, review, and image requests to Flask on port 5000.
+Open the Vite URL printed in the terminal, normally `http://127.0.0.1:5173`. The Vite development server proxies `/api`, authentication, booking, Paystack callback, review, and image requests to Flask on port 5000.
 
 ## Configuration
 
-Production settings are listed in `.env.example`. A persistent `SECRET_KEY`, PostgreSQL `DATABASE_URL`, and shared Redis `RATELIMIT_STORAGE_URI` are required for a healthy production deployment, but the app still boots when they are missing and logs a `WARNING` at startup instead of refusing to serve: session signatures are derived from `DATABASE_URL` (or a random key when that is unavailable), the database falls back to ephemeral SQLite, and rate limits become per-instance. Daraja and email integrations are optional until configured. Never commit `.env` or put payment credentials in a URL.
+Production settings are listed in `.env.example`. A persistent `SECRET_KEY`, PostgreSQL `DATABASE_URL`, and shared Redis `RATELIMIT_STORAGE_URI` are required for a healthy production deployment, but the app still boots when they are missing and logs a `WARNING` at startup instead of refusing to serve: session signatures are derived from `DATABASE_URL` (or a random key when that is unavailable), the database falls back to ephemeral SQLite, and rate limits become per-instance. Paystack and email integrations are optional until configured. Never commit `.env` or put payment credentials in a URL.
 
 For local development, SQLite and the in-memory rate limiter are supported. They are not suitable for production or multiple application instances.
 
-Tour bookings are paid in KES through Safaricom Daraja Lipa Na M-Pesa Online. A booking remains pending until the payment callback is checked against Daraja's STK Query API; a browser redirect is not proof of payment. Test successful, cancelled, and timed-out payments with sandbox credentials before switching `DARAJA_ENV` to `production`.
+Tour and accommodation bookings, including international travelers' bookings, are paid in KES through Paystack's hosted checkout. Kenyan and international customers use the same booking flow and are redirected directly to Paystack after seats or room nights are reserved. A booking remains pending until Paystack verifies the transaction reference, KES currency, and exact amount. A browser redirect is never treated as proof of payment. International card acceptance must also be enabled for the live Paystack account.
+
+For Paystack, set `PAYSTACK_SECRET_KEY` to the server-side secret key and `PAYSTACK_CALLBACK_URL` to the public HTTPS callback URL (it defaults to `${SITE_URL}/paystack/callback`). Configure `https://<your-domain>/paystack/webhook` in the Paystack dashboard. The webhook accepts both legacy `x-paystack-signature` HMAC signatures made with the secret key and current timestamped `Paystack-Signature` values made with `PAYSTACK_WEBHOOK_SECRET`. Aged pending transactions are rechecked when their status is polled or a partner retries renewal; only provider-confirmed terminal results release reserved capacity or clear a renewal blocker. Test successful, failed, abandoned, duplicate, and replayed events with Paystack test keys before switching to live keys.
 
 Customers can cancel requested or confirmed bookings online up to the cancellation window saved in admin settings (48 hours before departure or check-in by default). Cancelling a paid booking releases the held tour seats or room nights and queues a full refund automatically; refunds are sent manually outside the app and an administrator marks them paid in the admin portal. Refunds are tracked with a status (`none`, `pending`, `paid`, `rejected`), amount, reason, and request/payout timestamps.
 
@@ -90,12 +92,12 @@ Configure these production and preview environment variables in the Vercel proje
 - `RATELIMIT_STORAGE_URI`: external Redis connection URL
 - `FLASK_ENV=production`
 - `SITE_URL`: canonical HTTPS site URL
-- `DARAJA_ENV=sandbox` and Daraja credentials/callback URL while testing
+- `PAYSTACK_SECRET_KEY`, `PAYSTACK_CALLBACK_URL`, and optionally `PAYSTACK_WEBHOOK_SECRET` for Paystack
 - Email settings if contact and booking emails are required
 
-Vercel's function filesystem is ephemeral. Do not configure SQLite or `UPLOAD_DIR`; without `DATABASE_URL` the function boots on ephemeral SQLite under `/tmp` and every cold start loses bookings and accounts, and image upload endpoints intentionally return 503 on Vercel until persistent object storage is integrated. Bundled `images/` and `pictures/` assets continue to serve normally. Verify `/healthz`, `/readyz`, page navigation, booking, and Daraja callbacks after deployment.
+Vercel's function filesystem is ephemeral. Do not configure SQLite or `UPLOAD_DIR`; without `DATABASE_URL` the function boots on ephemeral SQLite under `/tmp` and every cold start loses bookings and accounts, and image upload endpoints intentionally return 503 on Vercel until persistent object storage is integrated. Bundled `images/` and `pictures/` assets continue to serve normally. Verify `/healthz`, `/readyz`, page navigation, domestic and international booking checkout, and Paystack callbacks/webhooks after deployment.
 
-On Vercel the app trusts the edge's `X-Forwarded-*` headers, so rate limits key on the visitor IP instead of the proxy address; set `TRUST_PROXY_HEADERS=true` to opt in behind another reverse proxy. Hashed bundles under `/assets/` are served with a one-year immutable cache and bundled photography for one day, both of which the Vercel CDN honours, so repeat visits do not invoke the function for static files. Before the first deploy, run `python -m pytest` and `npm --prefix frontend run build`, then confirm `DATABASE_URL`, `SECRET_KEY`, `RATELIMIT_STORAGE_URI`, and `DARAJA_CALLBACK_URL` point at the production hostname.
+On Vercel the app trusts the edge's `X-Forwarded-*` headers, so rate limits key on the visitor IP instead of the proxy address; set `TRUST_PROXY_HEADERS=true` to opt in behind another reverse proxy. Hashed bundles under `/assets/` are served with a one-year immutable cache and bundled photography for one day, both of which the Vercel CDN honours, so repeat visits do not invoke the function for static files. Before the first deploy, run `python -m pytest` and `npm --prefix frontend run build`, then confirm `DATABASE_URL`, `SECRET_KEY`, `RATELIMIT_STORAGE_URI`, `PAYSTACK_CALLBACK_URL`, and the Paystack webhook URL point at the production hostname.
 
 ### CI/CD
 
@@ -110,7 +112,8 @@ Two guards keep local, remote, and deployed state aligned. The `deploy-vercel` j
 - Set a long, random `SECRET_KEY` in every deployed environment.
 - Use HTTPS in production and enable secure session cookies.
 - Keep PostgreSQL and Redis credentials outside the repository.
-- Daraja callback URLs must be public HTTPS URLs; payment success is confirmed through Daraja verification, not a browser redirect.
+- The Paystack callback URL must be a public HTTPS URL; payment success is confirmed through server-side verification, not a browser redirect.
+- Keep `PAYSTACK_SECRET_KEY` and `PAYSTACK_WEBHOOK_SECRET` server-side, and reject webhooks whose signatures do not match.
 - Uploads require an authenticated admin or partner session, CSRF protection, safe filenames, and validated image signatures.
 - Do not expose the development SQLite database, `.env`, or upload directory publicly.
 

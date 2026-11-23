@@ -37,8 +37,12 @@ class Booking(db.Model):
     commission_rate = db.Column(db.Float, nullable=False, default=15.0)
     traffic_source = db.Column(db.String(120), nullable=False, default='unattributed')
     payment_status = db.Column(db.String(30), nullable=False, default='pending')
+    payment_method = db.Column(db.String(20), nullable=False, default='paystack')
+    payment_channel = db.Column(db.String(40), nullable=True)
+    paystack_reference = db.Column(db.String(100), nullable=True)
     payment_confirmed_at = db.Column(db.DateTime, nullable=True)
     payment_reference = db.Column(db.String(64), nullable=True, default=lambda: secrets.token_urlsafe(32))
+    # Legacy M-Pesa fields remain so historical bookings and receipts load.
     checkout_request_id = db.Column(db.String(100), nullable=True)
     merchant_request_id = db.Column(db.String(100), nullable=True)
     mpesa_receipt_number = db.Column(db.String(30), nullable=True, unique=True)
@@ -54,6 +58,7 @@ class Booking(db.Model):
         db.Index('uq_booking_payment_reference', 'payment_reference', unique=True),
         db.Index('uq_booking_checkout_request_id', 'checkout_request_id', unique=True),
         db.Index('uq_booking_mpesa_receipt_number', 'mpesa_receipt_number', unique=True),
+        db.Index('uq_booking_paystack_reference', 'paystack_reference', unique=True),
     )
 
     def to_dict(self):
@@ -85,6 +90,9 @@ class Booking(db.Model):
             'guest_service_fee_rate': float(self.guest_service_fee_rate or 0),
             'commission_rate': self.commission_rate,
             'payment_status': self.payment_status,
+            'payment_method': self.payment_method or 'paystack',
+            'payment_channel': self.payment_channel,
+            'paystack_reference': self.paystack_reference,
             'payment_confirmed_at': self.payment_confirmed_at.isoformat() + 'Z' if self.payment_confirmed_at else None,
             'mpesa_receipt_number': self.mpesa_receipt_number,
             'refund_status': self.refund_status,

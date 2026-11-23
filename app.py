@@ -42,11 +42,13 @@ from saas.fees import (
 )
 from saas.modules.analytics.models import AnalyticsEvent
 from saas.modules.bookings.models import Booking, BookingDispute
-from saas.modules.bookings.daraja import (
-    DarajaError,
-    initiate_stk_push,
-    is_configured as is_daraja_configured,
-    query_stk_push,
+from saas.modules.bookings.paystack import (
+    PaystackError,
+    initialize_transaction as initialize_paystack_transaction,
+    is_configured as is_paystack_configured,
+    new_reference as new_paystack_reference,
+    verify_transaction as verify_paystack_transaction,
+    verify_webhook_signature,
 )
 from saas.modules.bookings.settings import AdminSetting
 from saas.modules.bookings.service import (
@@ -292,6 +294,10 @@ def ensure_booking_payment_columns():
             connection.execute(text('ALTER TABLE booking ADD COLUMN amount FLOAT NOT NULL DEFAULT 0.0'))
         if 'payment_status' not in booking_columns:
             connection.execute(text("ALTER TABLE booking ADD COLUMN payment_status VARCHAR(30) NOT NULL DEFAULT 'pending'"))
+        if 'payment_channel' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN payment_channel VARCHAR(40)'))
+        if 'paystack_reference' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN paystack_reference VARCHAR(100)'))
         if 'payment_reference' not in booking_columns:
             connection.execute(text('ALTER TABLE booking ADD COLUMN payment_reference VARCHAR(64)'))
         if 'checkout_request_id' not in booking_columns:
@@ -300,6 +306,22 @@ def ensure_booking_payment_columns():
             connection.execute(text('ALTER TABLE booking ADD COLUMN merchant_request_id VARCHAR(100)'))
         if 'mpesa_receipt_number' not in booking_columns:
             connection.execute(text('ALTER TABLE booking ADD COLUMN mpesa_receipt_number VARCHAR(30)'))
+        if 'payment_method' not in booking_columns:
+            connection.execute(text('ALTER TABLE booking ADD COLUMN payment_method VARCHAR(20)'))
+        # Pre-Paystack rows are historical M-Pesa payments, including failed
+        # attempts that never received a checkout ID. Only an explicit Paystack
+        # reference identifies a Paystack row during this backfill.
+        connection.execute(text("""
+            UPDATE booking
+            SET payment_method = CASE
+                WHEN paystack_reference IS NOT NULL THEN 'paystack'
+                ELSE 'mpesa'
+            END
+            WHERE payment_method IS NULL OR (
+                payment_method = 'paystack'
+                AND paystack_reference IS NULL
+            )
+        """))
         if 'payment_confirmed_at' not in booking_columns:
             connection.execute(text('ALTER TABLE booking ADD COLUMN payment_confirmed_at TIMESTAMP'))
         if 'traffic_source' not in booking_columns:
@@ -352,6 +374,45 @@ def ensure_booking_payment_columns():
         connection.execute(text(
             'CREATE UNIQUE INDEX IF NOT EXISTS uq_booking_mpesa_receipt_number '
             'ON booking (mpesa_receipt_number)'
+        ))
+        connection.execute(text(
+            'CREATE UNIQUE INDEX IF NOT EXISTS uq_booking_paystack_reference '
+            'ON booking (paystack_reference)'
+        ))
+
+
+def ensure_subscription_payment_columns():
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('vendor_subscription_payment'):
+        return
+    columns = {
+        column['name']
+        for column in inspector.get_columns('vendor_subscription_payment')
+    }
+    with db.engine.begin() as connection:
+        for column, declaration in {
+            'payment_method': 'VARCHAR(20)',
+            'payment_channel': 'VARCHAR(40)',
+            'paystack_reference': 'VARCHAR(100)',
+        }.items():
+            if column not in columns:
+                connection.execute(text(
+                    f'ALTER TABLE vendor_subscription_payment ADD COLUMN {column} {declaration}'
+                ))
+        connection.execute(text("""
+            UPDATE vendor_subscription_payment
+            SET payment_method = CASE
+                WHEN paystack_reference IS NOT NULL THEN 'paystack'
+                ELSE 'mpesa'
+            END
+            WHERE payment_method IS NULL OR (
+                payment_method = 'paystack'
+                AND paystack_reference IS NULL
+            )
+        """))
+        connection.execute(text(
+            'CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_paystack_reference '
+            'ON vendor_subscription_payment (paystack_reference)'
         ))
 
 
@@ -1347,6 +1408,7 @@ _DATABASE_INIT_ATTEMPTS = 3
 def _run_database_migrations():
     db.create_all()
     ensure_booking_payment_columns()
+    ensure_subscription_payment_columns()
     ensure_identity_columns()
     ensure_operator_columns()
     ensure_catalog_columns()
@@ -1420,46 +1482,38 @@ def save_booking(booking: dict) -> Booking:
     return save_booking_service(booking)
 
 
-def normalize_mpesa_phone(country_code: str, phone: str) -> str:
-    if country_code != '+254':
-        raise ValueError('M-Pesa payments require a Kenyan phone number.')
-    if not phone.isdigit():
-        raise ValueError('Enter your M-Pesa phone number using digits only.')
-
-    normalized = phone
-    if len(normalized) == 10 and normalized.startswith('0'):
-        normalized = normalized[1:]
-    elif len(normalized) == 12 and normalized.startswith('254'):
-        normalized = normalized[3:]
-    if len(normalized) != 9 or normalized[0] not in {'1', '7'}:
-        raise ValueError('Enter a valid Kenyan mobile number for M-Pesa.')
-    return f'254{normalized}'
+def normalize_contact_phone(value):
+    phone = str(value or '').strip()
+    digits = re.sub(r'\D', '', phone)
+    if not re.fullmatch(r'\+?[0-9][0-9 ()-]{5,24}', phone) or not 7 <= len(digits) <= 15:
+        raise ValueError('Enter a valid phone number, including its country code.')
+    return phone if phone.startswith('+') else f'+{digits}'
 
 
-def create_daraja_stk_push(booking: Booking):
-    result = initiate_stk_push(
-        booking.phone.removeprefix('+'),
-        int(round(booking.amount)),
-        booking.id,
-    )
-    booking.checkout_request_id = result['checkout_request_id']
-    booking.merchant_request_id = result.get('merchant_request_id')
+def validate_paystack_email(value):
+    email = str(value or '').strip()
+    if len(email) > 120 or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
+        raise ValueError('Enter a valid email address for Paystack checkout.')
+    return email
+
+
+def create_paystack_checkout(booking: Booking):
+    reference = new_paystack_reference(f'B{booking.id}')
+    # Save the reference before initializing so a callback or webhook can still
+    # match the booking if the browser never receives the checkout URL.
+    booking.payment_method = 'paystack'
+    booking.paystack_reference = reference
     db.session.commit()
-    return result
-
-
-def _callback_metadata(callback):
-    metadata_container = callback.get('CallbackMetadata', {})
-    if not isinstance(metadata_container, dict):
-        return {}
-    metadata = metadata_container.get('Item', [])
-    if not isinstance(metadata, list):
-        return {}
-    return {
-        item.get('Name'): item.get('Value')
-        for item in metadata
-        if isinstance(item, dict) and isinstance(item.get('Name'), str)
-    }
+    return initialize_paystack_transaction(
+        email=booking.email,
+        amount=int(round(booking.amount)),
+        reference=reference,
+        metadata={
+            'booking_id': booking.id,
+            'payment_reference': booking.payment_reference,
+            'kind': 'booking',
+        },
+    )
 
 
 def release_booking_availability(booking):
@@ -1790,143 +1844,175 @@ def catalogue_insights():
     return insights
 
 
-def _release_failed_mpesa_booking(booking: Booking, result_description: str):
+def _release_failed_payment_booking(booking: Booking, result_description: str):
     if booking.payment_status != 'pending':
         return
     release_booking_availability(booking)
     booking.payment_status = 'failed'
     booking.status = 'cancelled'
     db.session.commit()
-    app.logger.info('M-Pesa payment failed for booking %s: %s', booking.id, result_description)
+    app.logger.info('%s payment failed for booking %s: %s', booking.payment_method, booking.id, result_description)
 
 
-def process_daraja_callback(payload):
-    body = payload.get('Body')
-    if not isinstance(body, dict) or not isinstance(body.get('stkCallback'), dict):
-        return 'Invalid callback payload', 400
-    stk_callback = body['stkCallback']
-    checkout_request_id = stk_callback.get('CheckoutRequestID')
-    merchant_request_id = stk_callback.get('MerchantRequestID')
-    callback_result_code = stk_callback.get('ResultCode')
-    if not all(isinstance(value, str) and value for value in (checkout_request_id, merchant_request_id)):
-        return 'Invalid callback references', 400
+def booking_payment_receipt(booking):
+    if booking.payment_method == 'paystack':
+        return booking.paystack_reference
+    return booking.mpesa_receipt_number
+
+
+def payment_method_label(booking):
+    return 'Paystack' if booking.payment_method == 'paystack' else 'M-Pesa'
+
+
+def _paystack_transaction_matches(reference, transaction, amount):
     try:
-        callback_result_code = int(callback_result_code)
+        verified_amount = int(transaction.get('amount'))
     except (TypeError, ValueError):
-        return 'Invalid callback result', 400
-
-    booking = Booking.query.filter_by(checkout_request_id=checkout_request_id).first()
-    if booking and booking.merchant_request_id == merchant_request_id:
-        return _process_booking_daraja_callback(
-            booking, stk_callback, checkout_request_id, callback_result_code
-        )
-
-    payment = VendorSubscriptionPayment.query.filter_by(
-        checkout_request_id=checkout_request_id
-    ).first()
-    if payment and payment.merchant_request_id == merchant_request_id:
-        return _process_subscription_daraja_callback(
-            payment, stk_callback, checkout_request_id, callback_result_code
-        )
-
-    app.logger.warning('Ignoring unmatched Daraja callback.')
-    return '', 204
+        return False
+    return (
+        transaction.get('reference') == reference
+        and transaction.get('currency') == 'KES'
+        and verified_amount == int(round(amount)) * 100
+    )
 
 
-def _verified_daraja_result(checkout_request_id, callback_result_code, context):
-    """Confirm a callback against Daraja's own record of the payment."""
-    try:
-        query_result = query_stk_push(checkout_request_id)
-    except DarajaError:
-        app.logger.exception('Could not verify Daraja callback for %s.', context)
-        return None, ('Payment verification temporarily unavailable', 503)
-
-    try:
-        query_result_code = int(query_result.get('ResultCode', -1))
-    except (TypeError, ValueError):
-        query_result_code = -1
-    if (
-        str(query_result.get('ResponseCode', '')) != '0'
-        or query_result.get('CheckoutRequestID') != checkout_request_id
-        or query_result_code != callback_result_code
-    ):
-        app.logger.warning('Daraja query did not match callback for %s.', context)
-        return None, ('Payment verification is pending', 503)
-    return query_result, None
-
-
-def _callback_amount_and_phone(stk_callback):
-    """Amount, payer phone, and receipt from a successful STK callback."""
-    metadata = _callback_metadata(stk_callback)
-    receipt = metadata.get('MpesaReceiptNumber')
-    phone_number = metadata.get('PhoneNumber')
-    try:
-        raw_amount = metadata.get('Amount')
-        if raw_amount is None or phone_number is None:
-            raise ValueError('Missing payment amount or phone number')
-        amount = int(raw_amount)
-        phone_number = str(int(phone_number))
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(receipt, str) or not receipt:
-        return None
-    return amount, phone_number, receipt
-
-
-def _process_booking_daraja_callback(booking, stk_callback, checkout_request_id, callback_result_code):
+def _settle_paystack_booking(reference, transaction):
+    booking = Booking.query.filter_by(paystack_reference=reference).with_for_update().first()
+    if booking is None:
+        return 'Paystack payment reference not found', 404
+    if not _paystack_transaction_matches(reference, transaction, booking.amount):
+        app.logger.error('Paystack transaction details did not match booking %s.', booking.id)
+        return 'Payment details did not match booking', 400
     if booking.payment_status != 'pending':
         return '', 204
 
-    context = f'booking {booking.id}'
-    query_result, error = _verified_daraja_result(checkout_request_id, callback_result_code, context)
-    if error:
-        return error
-
-    if callback_result_code != 0:
+    status = str(transaction.get('status') or '').lower()
+    if status in {'failed', 'abandoned', 'reversed', 'cancelled'}:
         try:
-            _release_failed_mpesa_booking(
+            _release_failed_payment_booking(
                 booking,
-                str(query_result.get('ResultDesc') or stk_callback.get('ResultDesc') or 'Payment was not completed.'),
+                str(transaction.get('gateway_response') or 'Payment was not completed.'),
             )
         except ValueError:
             db.session.rollback()
-            app.logger.exception('Could not release capacity for failed M-Pesa booking %s.', booking.id)
+            app.logger.exception('Could not release capacity for failed Paystack booking %s.', booking.id)
             return 'Could not update booking availability', 503
         return '', 204
-
-    details = _callback_amount_and_phone(stk_callback)
-    if details is None:
-        return 'Invalid payment details', 400
-    amount, phone_number, receipt = details
-    if amount != int(round(booking.amount)) or phone_number != booking.phone.removeprefix('+'):
-        app.logger.error('Daraja payment details did not match booking %s.', booking.id)
-        return 'Payment details did not match booking', 400
+    if status != 'success':
+        return '', 204
 
     cancelled = booking.status == 'cancelled'
     booking.payment_status = 'paid'
     if not cancelled:
         booking.status = 'confirmed'
-    booking.mpesa_receipt_number = receipt
+    booking.payment_channel = str(transaction.get('channel') or 'paystack')[:40]
     booking.payment_confirmed_at = datetime.utcnow()
     if cancelled:
         queue_booking_refund(
             booking,
             'Payment was confirmed after the booking was cancelled, so the full amount is refundable.',
         )
-    try:
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        app.logger.exception('Daraja receipt could not be uniquely assigned to booking %s.', booking.id)
-        return 'Payment receipt was already processed', 409
+    db.session.commit()
     if cancelled:
         app.logger.warning(
-            'Booking %s was paid after cancellation; refund queued for manual payout.', booking.id
+            'Booking %s was paid through Paystack after cancellation; refund queued for manual payout.',
+            booking.id,
         )
         send_refund_notification(booking, paid=False)
     else:
         send_booking_confirmation(booking, payment_confirmed=True)
     return '', 204
+
+
+def _settle_paystack_subscription(reference, transaction):
+    payment = VendorSubscriptionPayment.query.filter_by(
+        paystack_reference=reference
+    ).with_for_update().first()
+    if payment is None:
+        return 'Paystack payment reference not found', 404
+    if not _paystack_transaction_matches(reference, transaction, payment.amount):
+        app.logger.error('Paystack transaction details did not match subscription payment %s.', payment.id)
+        return 'Payment details did not match subscription', 400
+    if payment.status != 'pending':
+        return '', 204
+
+    status = str(transaction.get('status') or '').lower()
+    if status in {'failed', 'abandoned', 'reversed', 'cancelled'}:
+        payment.status = 'failed'
+        db.session.commit()
+        return '', 204
+    if status != 'success':
+        return '', 204
+
+    vendor = db.session.get(VendorAccount, payment.vendor_id)
+    if vendor is None:
+        return 'Subscription payment has no partner account', 409
+    payment.status = 'paid'
+    payment.payment_channel = str(transaction.get('channel') or 'paystack')[:40]
+    payment.paid_at = datetime.utcnow()
+    activate_vendor_subscription(vendor, payment)
+    db.session.commit()
+    app.logger.info(
+        'Partner %s renewed through Paystack until %s.', vendor.id, vendor.subscription_renews_at
+    )
+    return '', 204
+
+
+def process_paystack_reference(reference, transaction=None):
+    if not isinstance(reference, str) or not re.fullmatch(r'[A-Za-z0-9.=-]{1,100}', reference):
+        return {'error': 'Invalid Paystack reference', 'status': 400}
+
+    booking = Booking.query.filter_by(paystack_reference=reference).first()
+    payment = VendorSubscriptionPayment.query.filter_by(paystack_reference=reference).first()
+    if booking is None and payment is None:
+        return None
+    if booking is not None and booking.payment_status != 'pending':
+        return {'kind': 'booking', 'reference': booking.payment_reference}
+    if payment is not None and payment.status != 'pending':
+        return {'kind': 'subscription', 'reference': payment.reference}
+    verified_transaction = transaction or verify_paystack_transaction(reference)
+
+    if booking is not None:
+        error, status = _settle_paystack_booking(reference, verified_transaction)
+        if error:
+            return {'error': error, 'status': status}
+        return {'kind': 'booking', 'reference': booking.payment_reference}
+    error, status = _settle_paystack_subscription(reference, verified_transaction)
+    if error:
+        return {'error': error, 'status': status}
+    return {'kind': 'subscription', 'reference': payment.reference}
+
+
+_PAYSTACK_RECONCILIATION_DELAY = timedelta(minutes=15)
+_PAYSTACK_RECONCILIATION_INTERVAL = timedelta(minutes=5)
+_paystack_reconciliation_attempts = {}
+_paystack_reconciliation_lock = threading.Lock()
+
+
+def _reconcile_aged_paystack_payment(reference, created_at):
+    """Recheck an old pending transaction without releasing inventory speculatively."""
+    if not reference or not isinstance(created_at, datetime):
+        return
+    now = datetime.utcnow()
+    if now - created_at < _PAYSTACK_RECONCILIATION_DELAY:
+        return
+    with _paystack_reconciliation_lock:
+        last_attempt = _paystack_reconciliation_attempts.get(reference)
+        if last_attempt and now - last_attempt < _PAYSTACK_RECONCILIATION_INTERVAL:
+            return
+        if len(_paystack_reconciliation_attempts) >= 1024:
+            oldest_reference = min(
+                _paystack_reconciliation_attempts,
+                key=_paystack_reconciliation_attempts.get,
+            )
+            del _paystack_reconciliation_attempts[oldest_reference]
+        _paystack_reconciliation_attempts[reference] = now
+    try:
+        process_paystack_reference(reference)
+    except PaystackError:
+        # Keep the pending state and retry after the throttle interval. Only a
+        # provider-confirmed terminal result may release reserved capacity.
+        app.logger.exception('Could not reconcile aged Paystack payment %s.', reference)
 
 
 def activate_vendor_subscription(vendor, payment):
@@ -1942,54 +2028,6 @@ def activate_vendor_subscription(vendor, payment):
     vendor.subscription_started_at = vendor.subscription_started_at or now
     vendor.subscription_renews_at = payment.period_end
     vendor.subscription_monthly_fee = float(payment.amount or 0)
-
-
-def _process_subscription_daraja_callback(payment, stk_callback, checkout_request_id, callback_result_code):
-    if payment.status != 'pending':
-        return '', 204
-
-    context = f'subscription payment {payment.id}'
-    query_result, error = _verified_daraja_result(checkout_request_id, callback_result_code, context)
-    if error:
-        return error
-
-    if callback_result_code != 0:
-        payment.status = 'failed'
-        db.session.commit()
-        app.logger.info(
-            'M-Pesa subscription payment %s failed: %s',
-            payment.id,
-            query_result.get('ResultDesc') or stk_callback.get('ResultDesc') or 'Payment was not completed.',
-        )
-        return '', 204
-
-    details = _callback_amount_and_phone(stk_callback)
-    if details is None:
-        return 'Invalid payment details', 400
-    amount, phone_number, receipt = details
-    if amount != int(round(payment.amount)) or phone_number != payment.phone.removeprefix('+'):
-        app.logger.error('Daraja payment details did not match subscription payment %s.', payment.id)
-        return 'Payment details did not match subscription', 400
-
-    vendor = db.session.get(VendorAccount, payment.vendor_id)
-    if vendor is None:
-        app.logger.error('Subscription payment %s has no partner account.', payment.id)
-        return 'Subscription payment has no partner account', 409
-
-    payment.status = 'paid'
-    payment.mpesa_receipt_number = receipt
-    payment.paid_at = datetime.utcnow()
-    activate_vendor_subscription(vendor, payment)
-    try:
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        app.logger.exception('Daraja receipt could not be uniquely assigned to subscription payment %s.', payment.id)
-        return 'Payment receipt was already processed', 409
-    app.logger.info(
-        'Partner %s renewed its subscription until %s.', vendor.id, vendor.subscription_renews_at
-    )
-    return '', 204
 
 
 def send_email_message(message: EmailMessage, *, context: str) -> bool:
@@ -2040,7 +2078,7 @@ def send_email_notification(submission: dict) -> bool:
 def generate_booking_document(booking: Booking, document_type: str) -> bytes:
     if document_type not in {'invoice', 'receipt'}:
         raise ValueError('Unsupported booking document type.')
-    if document_type == 'receipt' and not booking.mpesa_receipt_number:
+    if document_type == 'receipt' and not booking_payment_receipt(booking):
         raise ValueError('A verified payment is required to generate a receipt.')
 
     def safe_text(value):
@@ -2092,8 +2130,8 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
     ])
     if document_type == 'receipt':
         rows.extend([
-            ('Payment method', 'M-Pesa'),
-            ('M-Pesa receipt', booking.mpesa_receipt_number),
+            ('Payment method', payment_method_label(booking)),
+            ('Payment reference', booking_payment_receipt(booking)),
         ])
     y = 642
     for label, value in rows:
@@ -2134,7 +2172,11 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
 
     document.setFont('Helvetica', 9)
     document.setFillColorRGB(0.35, 0.40, 0.37)
-    footer = 'Payment received and verified via M-Pesa.' if document_type == 'receipt' else 'Keep this invoice for your booking records.'
+    footer = (
+        f'Payment received and verified via {payment_method_label(booking)}.'
+        if document_type == 'receipt'
+        else 'Keep this invoice for your booking records.'
+    )
     document.drawString(72, 90, safe_text(footer))
     document.drawString(72, 74, safe_text(f'Payment reference: {booking.payment_reference}'))
     document.save()
@@ -2143,6 +2185,8 @@ def generate_booking_document(booking: Booking, document_type: str) -> bytes:
 
 def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> bool:
     listing_name = booking_listing_name(booking)
+    payment_method = payment_method_label(booking)
+    payment_receipt = booking_payment_receipt(booking)
     if booking.booking_type == 'property':
         booking_details = (
             f"Accommodation: {listing_name}\n"
@@ -2171,16 +2215,16 @@ def send_booking_confirmation(booking: Booking, *, payment_confirmed=False) -> b
         f"Total payable: KSh {booking.amount:,.0f}\n"
         f"Booking status: {booking.status}\n"
         + (
-            f"M-Pesa payment received and verified. Receipt: {booking.mpesa_receipt_number}. Your invoice and receipt are attached.\n"
+            f"{payment_method} payment received and verified. Reference: {payment_receipt}. Your invoice and receipt are attached.\n"
             if payment_confirmed
-            else "Check the M-Pesa prompt on your phone to complete payment. We will confirm your booking after Daraja verifies the payment. Your invoice is attached.\n"
+            else "Complete your payment through the secure Paystack checkout. We will confirm your booking after Paystack verifies the payment. Your invoice is attached.\n"
         )
         + f"\nYou can sign in at the {BRAND_NAME} website to view and manage bookings made with your account.\n"
     )
     try:
         invoice = generate_booking_document(booking, 'invoice')
         message.add_attachment(invoice, maintype='application', subtype='pdf', filename=f'{BRAND_NAME}-Invoice-{booking.id}.pdf')
-        if booking.mpesa_receipt_number and booking.payment_status in {'paid', 'refunded'}:
+        if payment_receipt and booking.payment_status in {'paid', 'refunded'}:
             receipt = generate_booking_document(booking, 'receipt')
             message.add_attachment(receipt, maintype='application', subtype='pdf', filename=f'{BRAND_NAME}-Receipt-{booking.id}.pdf')
     except Exception:
@@ -2220,7 +2264,7 @@ def send_refund_notification(booking: Booking, *, paid: bool) -> bool:
     if paid:
         message_body = (
             f"We have sent your refund of KSh {amount:,.0f} for booking #{booking.id}. "
-            "It should reflect on your M-Pesa statement shortly.\n"
+            "It should reflect through your original payment method shortly.\n"
         )
     elif booking.refund_status == 'rejected':
         message_body = (
@@ -2986,7 +3030,7 @@ def admin_cancel_booking(booking_id):
     if booking.status not in {'requested', 'confirmed', 'in_preparation'}:
         return {'error': 'Only active bookings can be cancelled.'}, 409
     if booking.payment_status == 'pending':
-        return {'error': 'This booking has a pending M-Pesa request. Wait for its payment result before cancelling.'}, 409
+        return {'error': 'This booking has a pending payment request. Wait for its payment result before cancelling.'}, 409
     try:
         release_booking_availability(booking)
     except ValueError as exc:
@@ -4218,7 +4262,27 @@ def vendor_subscription_payload(vendor):
         'standard_host_commission_rate': standard_rate,
         'subscriber_host_commission_rate': subscriber_rate,
         'payments': [payment.to_dict() for payment in payments],
+        'payment_methods': {
+            'paystack': is_paystack_configured(),
+        },
     }
+
+
+def create_paystack_subscription_checkout(vendor, payment):
+    reference = new_paystack_reference(f'SUB{payment.id}')
+    payment.payment_method = 'paystack'
+    payment.paystack_reference = reference
+    db.session.commit()
+    return initialize_paystack_transaction(
+        email=vendor.email,
+        amount=int(round(payment.amount)),
+        reference=reference,
+        metadata={
+            'subscription_payment_id': payment.id,
+            'payment_reference': payment.reference,
+            'kind': 'subscription',
+        },
+    )
 
 
 @app.route('/api/vendor/subscription/renew', methods=['POST'])
@@ -4235,59 +4299,69 @@ def vendor_renew_subscription():
         return {'error': 'Monthly subscriptions are available to tour and safari operators.'}, 400
     if not vendor.is_active:
         return {'error': 'Restore your partner access before renewing a subscription.'}, 403
-    if not is_daraja_configured():
-        return {'error': 'M-Pesa payments are not configured right now. Please try again later.'}, 503
+    payload = json_payload()
+    payment_method = str(payload.get('payment_method', 'paystack')).strip().lower()
+    if payment_method != 'paystack':
+        return {'error': 'Paystack is the only supported payment method.'}, 400
+    if not is_paystack_configured():
+        return {'error': 'Paystack payments are not configured right now. Please try again later.'}, 503
 
     amount = platform_subscription_fee()
     if amount <= 0:
         return {'error': 'Subscriptions are not open for renewal right now.'}, 400
 
-    payload = json_payload()
-    try:
-        mpesa_phone = normalize_mpesa_phone(
-            str(payload.get('country_code', '+254')).strip(),
-            str(payload.get('phone', '')).strip(),
-        )
-    except ValueError as exc:
-        return {'error': str(exc)}, 400
+    phone = str(vendor.phone or '')[:20]
 
-    if VendorSubscriptionPayment.query.filter_by(vendor_id=vendor.id, status='pending').first():
-        return {
-            'error': 'A subscription payment is already waiting for confirmation. Finish it on your phone, then try again in a few minutes.'
-        }, 409
+    pending_payment = VendorSubscriptionPayment.query.filter_by(
+        vendor_id=vendor.id, status='pending'
+    ).first()
+    if pending_payment:
+        _reconcile_aged_paystack_payment(
+            pending_payment.paystack_reference, pending_payment.created_at
+        )
+        db.session.refresh(pending_payment)
+        if pending_payment.status == 'pending':
+            return {
+                'error': 'A subscription payment is already waiting for confirmation. Finish that payment, then try again in a few minutes.'
+            }, 409
 
     payment = VendorSubscriptionPayment(
         vendor_id=vendor.id,
         amount=amount,
-        phone=mpesa_phone,
+        phone=phone,
+        payment_method=payment_method,
         status='pending',
     )
     db.session.add(payment)
     db.session.commit()
     try:
-        request_result = initiate_stk_push(mpesa_phone, int(round(amount)), f'SUB{payment.id}')
-    except DarajaError as exc:
+        request_result = create_paystack_subscription_checkout(vendor, payment)
+    except PaystackError as exc:
         if exc.outcome_unknown:
-            # The prompt may still have reached the phone, so keep the reference
-            # visible for the partner instead of inviting a second payment.
-            payment.status = 'failed'
-            db.session.commit()
-            app.logger.warning('M-Pesa subscription request unconfirmed: %s', exc)
+            # The provider may have accepted the request, so keep the reference
+            # visible instead of inviting the partner to make a second payment.
+            app.logger.warning('Paystack subscription request unconfirmed: %s', exc)
             return {
-                'message': 'The M-Pesa request may have been sent. Check your phone and contact support with this reference before trying again.',
+                'message': 'The Paystack checkout may have been created. Check your payment status and contact support with this reference before trying again.',
                 'payment_reference': payment.reference,
                 'payment_pending': True,
             }, 202
         payment.status = 'failed'
         db.session.commit()
-        return {'error': str(exc)}, 502
+        return {'error': 'Paystack could not start the payment. Please try again.'}, 502
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception('Could not save the Paystack subscription payment reference.')
+        return {
+            'message': 'The Paystack checkout may have been created. Check its status and contact support before trying again.',
+            'payment_reference': payment.reference,
+            'payment_pending': True,
+        }, 202
 
-    payment.checkout_request_id = request_result['checkout_request_id']
-    payment.merchant_request_id = request_result['merchant_request_id']
-    db.session.commit()
     return {
         'message': request_result['customer_message'],
         'payment_reference': payment.reference,
+        'authorization_url': request_result.get('authorization_url'),
         'subscription': vendor_subscription_payload(vendor),
     }, 202
 
@@ -4304,6 +4378,10 @@ def vendor_subscription_status(reference):
     ).first()
     if not payment:
         return {'error': 'Subscription payment not found.'}, 404
+    if payment.payment_method == 'paystack' and payment.status == 'pending':
+        _reconcile_aged_paystack_payment(payment.paystack_reference, payment.created_at)
+        db.session.refresh(payment)
+        db.session.refresh(vendor)
     return {
         'payment': payment.to_dict(),
         'subscription': vendor_subscription_payload(vendor),
@@ -4429,10 +4507,10 @@ def vendor_update_booking_status(booking_id):
     if requested_status not in transitions.get(booking.status, set()):
         return {'error': 'That booking status transition is not allowed.'}, 409
     if requested_status != 'cancelled' and booking.payment_status != 'paid':
-        return {'error': 'M-Pesa payment must be verified before this booking can be confirmed.'}, 409
+        return {'error': 'Payment must be verified before this booking can be confirmed.'}, 409
     if requested_status == 'cancelled':
         if booking.payment_status == 'pending':
-            return {'error': 'This booking has a pending M-Pesa request. Wait for its payment result before cancelling.'}, 409
+            return {'error': 'This booking has a pending payment request. Wait for its payment result before cancelling.'}, 409
         try:
             release_booking_availability(booking)
         except ValueError as exc:
@@ -4659,6 +4737,9 @@ def public_catalogue():
         'destinations': [item.to_dict() for item in Destination.query.order_by(Destination.name).all()],
         'whatsapp_business_phone': WHATSAPP_BUSINESS_PHONE,
         'social_links': social_profile_links(),
+        'payments': {
+            'paystack': is_paystack_configured(),
+        },
         'fees': {
             'host_commission_rate': platform_fee_rates()[0],
             'subscriber_host_commission_rate': platform_subscriber_rate(),
@@ -5727,7 +5808,7 @@ def customer_cancel_booking(booking_id):
     if booking.status not in {'requested', 'confirmed'}:
         return {'error': 'Only requested or confirmed bookings can be cancelled.'}, 409
     if booking.payment_status == 'pending':
-        return {'error': 'Your M-Pesa request is still pending. Wait for its payment result before cancelling.'}, 409
+        return {'error': 'Your payment request is still pending. Wait for its payment result before cancelling.'}, 409
     try:
         if booking.booking_type == 'property':
             booking_stay_change_deadline(booking)
@@ -6250,20 +6331,29 @@ def booking_request_error(message, status_code):
 def booking_confirmation():
     data = request.get_json(silent=True) if request.is_json else request.form
     data = data or {}
-    if not is_daraja_configured():
-        message = 'M-Pesa payments are not configured right now. Please try again later.'
-        if request.is_json:
-            return {'error': message}, 503
-        return redirect('/booking.html?error=' + urllib.parse.quote(message))
+    payment_method = str(data.get('payment_method', 'paystack')).strip().lower()
+    if payment_method != 'paystack':
+        return booking_request_error('Paystack is the only supported payment method.', 400)
+    if not is_paystack_configured():
+        return booking_request_error(
+            'Paystack payments are not configured right now. Please try again later.', 503
+        )
 
     country_code = str(data.get('country_code', '')).strip()
     phone = str(data.get('phone', '')).strip()
     try:
-        mpesa_phone = normalize_mpesa_phone(country_code, phone)
+        raw_contact_phone = str(data.get('contact_phone', '')).strip()
+        if not raw_contact_phone:
+            raw_contact_phone = str(data.get('international_phone', '')).strip()
+        if not raw_contact_phone:
+            raw_contact_phone = (
+                phone if phone.startswith('+')
+                else f"{country_code or '+254'}{phone}"
+            )
+        contact_phone = normalize_contact_phone(raw_contact_phone)
+        validate_paystack_email(data.get('email', ''))
     except ValueError as exc:
-        if request.is_json:
-            return {'error': str(exc)}, 400
-        return redirect('/booking.html?error=' + urllib.parse.quote(str(exc)))
+        return booking_request_error(str(exc), 400)
 
     tour = str(data.get('tour', ''))
     guests = data.get('guests', '1')
@@ -6366,7 +6456,8 @@ def booking_confirmation():
             'schedule_id': None,
             'name': data.get('name', 'Guest'),
             'email': data.get('email', ''),
-            'phone': f'+{mpesa_phone}',
+            'phone': contact_phone,
+            'payment_method': payment_method,
             'tour': stay['property'].slug,
             'date': stay['check_in'],
             'time': '',
@@ -6398,7 +6489,8 @@ def booking_confirmation():
             'schedule_id': schedule.id if schedule else None,
             'name': data.get('name', 'Guest'),
             'email': data.get('email', ''),
-            'phone': f'+{mpesa_phone}',
+            'phone': contact_phone,
+            'payment_method': payment_method,
             'tour': tour,
             'date': schedule.starts_at.date().isoformat() if schedule else data.get('date', ''),
             'time': schedule.starts_at.strftime('%H:%M') if schedule else data.get('time', ''),
@@ -6422,17 +6514,19 @@ def booking_confirmation():
     app.logger.info('Booking request saved: %s', saved_booking.to_dict())
 
     try:
-        payment_request = create_daraja_stk_push(saved_booking)
-    except DarajaError as exc:
+        payment_request = create_paystack_checkout(saved_booking)
+    except PaystackError as exc:
         if exc.outcome_unknown:
-            app.logger.exception('Daraja payment initiation outcome is unknown for booking %s.', saved_booking.id)
+            app.logger.exception('Paystack payment initiation outcome is unknown for booking %s.', saved_booking.id)
             email_sent = send_booking_confirmation(saved_booking)
+            message = 'We could not confirm whether the Paystack checkout was created. Check your payment status and contact support with this reference before trying again.'
             if request.is_json:
                 return {
                     'booking': saved_booking.to_dict(),
                     'payment_reference': saved_booking.payment_reference,
+                    'payment_method': payment_method,
                     'payment_pending': True,
-                    'message': 'We could not confirm whether the M-Pesa prompt was sent. Check your phone and payment status before trying again.',
+                    'message': message,
                     'email_sent': email_sent,
                     'managed': saved_booking.user_id is not None,
                 }, 202
@@ -6441,9 +6535,10 @@ def booking_confirmation():
                 'reference': saved_booking.payment_reference,
                 'email': 'sent' if email_sent else 'unavailable',
                 'managed': str(saved_booking.user_id is not None).lower(),
+                'method': payment_method,
                 'pending': 'unknown',
             }))
-        app.logger.error('Daraja rejected payment initiation for booking %s: %s', saved_booking.id, exc)
+        app.logger.error('Paystack rejected payment initiation for booking %s: %s', saved_booking.id, exc)
         try:
             release_booking_availability(saved_booking)
             saved_booking.payment_status = 'failed'
@@ -6451,25 +6546,25 @@ def booking_confirmation():
             db.session.commit()
         except ValueError:
             db.session.rollback()
-            app.logger.exception('Could not release failed M-Pesa booking %s.', saved_booking.id)
-        if request.is_json:
-            return {'error': 'M-Pesa could not start the payment. Your booking was not confirmed; please try again.'}, 503
-        return redirect('/booking.html?error=' + urllib.parse.quote(
-            'M-Pesa could not start the payment. Your booking was not confirmed; please try again.'
-        ))
+            app.logger.exception('Could not release failed Paystack booking %s.', saved_booking.id)
+        message = 'Paystack could not start the payment. Your booking was not confirmed; please try again.'
+        return booking_request_error(message, 503)
     except SQLAlchemyError:
         db.session.rollback()
-        app.logger.exception('Could not save the Daraja payment reference for booking %s.', saved_booking.id)
+        app.logger.exception('Could not save the Paystack payment reference for booking %s.', saved_booking.id)
+        message = 'The Paystack checkout may have been created. Check your payment status and contact support before trying again.'
         if request.is_json:
             return {
                 'booking': saved_booking.to_dict(),
                 'payment_reference': saved_booking.payment_reference,
+                'payment_method': payment_method,
                 'payment_pending': True,
-                'message': 'The M-Pesa request may have been sent. Check your phone and contact support before trying again.',
+                'message': message,
             }, 202
         return redirect('/booking-confirmation.html?' + urllib.parse.urlencode({
             'booking_id': saved_booking.id,
             'reference': saved_booking.payment_reference,
+            'method': payment_method,
             'pending': 'unknown',
         }))
 
@@ -6478,17 +6573,14 @@ def booking_confirmation():
         return {
             'booking': saved_booking.to_dict(),
             'payment_reference': saved_booking.payment_reference,
+            'payment_method': payment_method,
+            'authorization_url': payment_request.get('authorization_url'),
             'payment_pending': True,
             'message': payment_request['customer_message'],
             'email_sent': email_sent,
             'managed': saved_booking.user_id is not None,
         }, 201
-    return redirect('/booking-confirmation.html?' + urllib.parse.urlencode({
-        'booking_id': saved_booking.id,
-        'reference': saved_booking.payment_reference,
-        'email': 'sent' if email_sent else 'unavailable',
-        'managed': str(saved_booking.user_id is not None).lower(),
-    }))
+    return redirect(payment_request['authorization_url'])
 
 
 @app.route('/api/payment-status/<string:payment_reference>')
@@ -6497,15 +6589,23 @@ def payment_status(payment_reference):
     booking = Booking.query.filter_by(payment_reference=payment_reference).first()
     if not booking:
         return {'error': 'Payment status not found.'}, 404
+    if booking.payment_method == 'paystack' and booking.payment_status == 'pending':
+        _reconcile_aged_paystack_payment(booking.paystack_reference, booking.created_at)
+        db.session.refresh(booking)
+    receipt = booking_payment_receipt(booking)
     return {
         'payment_status': booking.payment_status,
         'booking_status': booking.status,
+        'payment_method': booking.payment_method,
+        'payment_channel': booking.payment_channel,
+        'payment_receipt': receipt,
+        # Retained for older confirmation-page clients.
         'mpesa_receipt_number': booking.mpesa_receipt_number,
         'document_urls': {
             'invoice': f'/api/payment-documents/{urllib.parse.quote(payment_reference, safe="")}/invoice',
             'receipt': (
                 f'/api/payment-documents/{urllib.parse.quote(payment_reference, safe="")}/receipt'
-                if booking.mpesa_receipt_number and booking.payment_status in {'paid', 'refunded'}
+                if receipt and booking.payment_status in {'paid', 'refunded'}
                 else None
             ),
         },
@@ -6521,7 +6621,7 @@ def payment_document(payment_reference, document_type):
     if not booking:
         return {'error': 'Payment document not found.'}, 404
     if document_type == 'receipt' and (
-        not booking.mpesa_receipt_number or booking.payment_status not in {'paid', 'refunded'}
+        not booking_payment_receipt(booking) or booking.payment_status not in {'paid', 'refunded'}
     ):
         return {'error': 'Payment document not found.'}, 404
 
@@ -6535,13 +6635,70 @@ def payment_document(payment_reference, document_type):
     )
 
 
-@app.route('/daraja/callback', methods=['POST'])
-def daraja_callback():
+@app.route('/paystack/callback', methods=['GET'])
+@limiter.limit('60 per minute')
+def paystack_callback():
+    reference = request.args.get('reference') or request.args.get('trxref')
+    if not reference:
+        return redirect('/booking.html?error=' + urllib.parse.quote('Paystack did not return a payment reference.'))
+
+    booking = Booking.query.filter_by(paystack_reference=reference).first()
+    payment = VendorSubscriptionPayment.query.filter_by(paystack_reference=reference).first()
+    if booking is None and payment is None:
+        return redirect('/booking.html?error=' + urllib.parse.quote('Paystack payment reference not found.'))
+
+    try:
+        result = process_paystack_reference(reference)
+    except PaystackError:
+        app.logger.exception('Could not verify Paystack callback for %s.', reference)
+        result = {'error': 'Payment verification temporarily unavailable', 'status': 503}
+    if not isinstance(result, dict) or 'error' in result:
+        if booking is not None:
+            return redirect('/booking-confirmation.html?' + urllib.parse.urlencode({
+                'booking_id': booking.id,
+                'reference': booking.payment_reference,
+                'method': 'paystack',
+                'pending': 'verification',
+            }))
+        return redirect('/partner/dashboard?' + urllib.parse.urlencode({
+            'paystack': 'returned',
+            'reference': payment.reference,
+        }))
+
+    if result['kind'] == 'booking':
+        return redirect('/booking-confirmation.html?' + urllib.parse.urlencode({
+            'booking_id': booking.id,
+            'reference': booking.payment_reference,
+            'method': 'paystack',
+        }))
+    return redirect('/partner/dashboard?' + urllib.parse.urlencode({
+        'paystack': 'returned',
+        'reference': payment.reference,
+    }))
+
+
+@app.route('/paystack/webhook', methods=['POST'])
+def paystack_webhook():
+    raw_body = request.get_data(cache=True)
+    if not verify_webhook_signature(
+        raw_body,
+        request.headers.get('x-paystack-signature', ''),
+        request.headers.get('Paystack-Signature', ''),
+    ):
+        return 'Invalid Paystack signature', 401
     payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return 'Invalid callback payload', 400
-    result, status = process_daraja_callback(payload)
-    return result, status
+    if not isinstance(payload, dict) or not isinstance(payload.get('data'), dict):
+        return 'Invalid webhook payload', 400
+    transaction = payload['data']
+    reference = transaction.get('reference')
+    if not isinstance(reference, str) or not reference:
+        return 'Invalid webhook reference', 400
+    result = process_paystack_reference(reference, transaction)
+    if result is None:
+        return '', 204
+    if 'error' in result:
+        return result['error'], result['status']
+    return '', 204
 
 
 @app.route('/dashboard', methods=['GET'])

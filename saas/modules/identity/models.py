@@ -150,14 +150,18 @@ class VendorAccount(db.Model):
 
 
 class VendorSubscriptionPayment(db.Model):
-    """One month of a partner subscription paid through M-Pesa STK Push."""
+    """One month of a partner subscription payment."""
 
     id = db.Column(db.Integer, primary_key=True)
     vendor_id = db.Column(db.Integer, db.ForeignKey('vendor_account.id'), nullable=False, index=True)
     amount = db.Column(db.Float, nullable=False, default=0.0)
     phone = db.Column(db.String(20), nullable=False, default='')
     status = db.Column(db.String(20), nullable=False, default='pending')
+    payment_method = db.Column(db.String(20), nullable=False, default='paystack')
+    payment_channel = db.Column(db.String(40), nullable=True)
+    paystack_reference = db.Column(db.String(100), nullable=True)
     reference = db.Column(db.String(64), nullable=False, default=lambda: secrets.token_urlsafe(24))
+    # Legacy M-Pesa fields remain for historical subscription receipts.
     checkout_request_id = db.Column(db.String(100), nullable=True)
     merchant_request_id = db.Column(db.String(100), nullable=True)
     mpesa_receipt_number = db.Column(db.String(30), nullable=True)
@@ -170,6 +174,7 @@ class VendorSubscriptionPayment(db.Model):
         db.Index('uq_subscription_payment_reference', 'reference', unique=True),
         db.Index('uq_subscription_checkout_request_id', 'checkout_request_id', unique=True),
         db.Index('uq_subscription_mpesa_receipt_number', 'mpesa_receipt_number', unique=True),
+        db.Index('uq_subscription_paystack_reference', 'paystack_reference', unique=True),
     )
 
     def to_dict(self):
@@ -177,6 +182,9 @@ class VendorSubscriptionPayment(db.Model):
             'id': self.id,
             'amount': float(self.amount or 0),
             'status': self.status,
+            'payment_method': self.payment_method or 'paystack',
+            'payment_channel': self.payment_channel,
+            'paystack_reference': self.paystack_reference,
             'reference': self.reference,
             'mpesa_receipt_number': self.mpesa_receipt_number,
             'period_start': self.period_start.isoformat() + 'Z' if self.period_start else None,

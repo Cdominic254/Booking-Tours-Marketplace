@@ -167,13 +167,14 @@ def guest_client():
 @pytest.fixture
 def stay(vendor_pair, guest_client, monkeypatch):
     """A vendor-owned property with a two-unit and a one-unit room."""
-    monkeypatch.setattr(application, 'is_daraja_configured', lambda: True)
+    monkeypatch.setattr(application, 'is_paystack_configured', lambda: True)
     monkeypatch.setattr(application, 'send_booking_confirmation', lambda booking, **kwargs: True)
     monkeypatch.setattr(application, 'send_booking_status_notification', lambda booking, **kwargs: True)
-    monkeypatch.setattr(application, 'initiate_stk_push', lambda phone, amount, booking_id: {
-        'checkout_request_id': f'ws_CO_{booking_id}',
-        'merchant_request_id': f'merchant_{booking_id}',
-        'customer_message': 'STK prompt sent.',
+    monkeypatch.setattr(application, 'initialize_paystack_transaction', lambda **kwargs: {
+        'reference': kwargs['reference'],
+        'authorization_url': 'https://checkout.paystack.com/stay-test',
+        'access_code': 'access_test',
+        'customer_message': 'Continue to Paystack.',
     })
 
     owner, owner_headers, owner_id = vendor_pair[0]
@@ -241,8 +242,7 @@ def stay_booking_payload(stay, room, check_in=None, check_out=None, guests=2, **
     payload = {
         'name': 'Accommodation Guest',
         'email': stay['guest']['email'],
-        'country_code': '+254',
-        'phone': '712345678',
+        'contact_phone': '+254 712 345 678',
         'tour': stay['slug'],
         'booking_type': 'property',
         'room_id': room['id'],
@@ -255,20 +255,6 @@ def stay_booking_payload(stay, room, check_in=None, check_out=None, guests=2, **
     }
     payload.update(overrides)
     return payload
-
-
-def _daraja_callback(booking, result_code, metadata=None):
-    callback = {
-        'MerchantRequestID': booking.merchant_request_id,
-        'CheckoutRequestID': booking.checkout_request_id,
-        'ResultCode': result_code,
-        'ResultDesc': 'The service request is processed.',
-    }
-    if metadata is not None:
-        callback['CallbackMetadata'] = {
-            'Item': [{'Name': key, 'Value': value} for key, value in metadata.items()],
-        }
-    return {'Body': {'stkCallback': callback}}
 
 
 def confirm_stay_booking(booking_id):
@@ -680,56 +666,88 @@ def test_stay_booking_validates_room_dates_and_capacity(stay):
         assert application.Booking.query.filter_by(user_id=guest['user_id']).count() == 0
 
 
-# M-Pesa lifecycle
+# Paystack lifecycle
 
 
-def test_successful_callback_confirms_stay_and_keeps_nights(stay, monkeypatch):
-    room = stay['rooms']['double']
-    check_in, check_out = stay_dates(40, 2)
-    booking_data = book_stay(stay, room, check_in, check_out)
-
-    with application.app.app_context():
-        booking = application.db.session.get(application.Booking, booking_data['id'])
-        callback = _daraja_callback(booking, 0, {
-            'Amount': int(round(booking.amount)),
-            'MpesaReceiptNumber': 'STAY123ABC',
-            'PhoneNumber': 254712345678,
-        })
-    monkeypatch.setattr(application, 'query_stk_push', lambda checkout_id: {
-        'ResponseCode': '0',
-        'ResultCode': '0',
-        'CheckoutRequestID': checkout_id,
+def test_paystack_callback_confirms_stay_and_keeps_reserved_nights(stay, monkeypatch):
+    monkeypatch.setattr(application, 'is_paystack_configured', lambda: True)
+    monkeypatch.setattr(application, 'initialize_paystack_transaction', lambda **kwargs: {
+        'reference': kwargs['reference'],
+        'authorization_url': 'https://checkout.paystack.com/stay-test',
+        'access_code': 'access_test',
+        'customer_message': 'Continue to Paystack.',
     })
+    room = stay['rooms']['double']
+    check_in, check_out = stay_dates(42, 2)
+    response = stay['guest']['client'].post(
+        '/booking-confirmation',
+        json=stay_booking_payload(
+            stay, room, check_in, check_out,
+            payment_method='paystack', contact_phone='+44 7700 900123',
+        ),
+    )
+    assert response.status_code == 201, response.get_json()
+    result = response.get_json()
+    assert result['authorization_url'] == 'https://checkout.paystack.com/stay-test'
+    assert result['booking']['phone'] == '+44 7700 900123'
 
-    result = stay['guest']['client'].post('/daraja/callback', json=callback)
-
-    assert result.status_code == 204
     with application.app.app_context():
-        booking = application.db.session.get(application.Booking, booking_data['id'])
+        booking = application.Booking.query.filter_by(id=result['booking']['id']).one()
+        transaction = {
+            'reference': booking.paystack_reference,
+            'status': 'success',
+            'currency': 'KES',
+            'amount': int(round(booking.amount)) * 100,
+            'channel': 'card',
+        }
+        paystack_reference = booking.paystack_reference
+    monkeypatch.setattr(application, 'verify_paystack_transaction', lambda reference: transaction)
+
+    callback = stay['guest']['client'].get(
+        '/paystack/callback', query_string={'reference': paystack_reference}
+    )
+
+    assert callback.status_code == 302
+    with application.app.app_context():
+        booking = application.Booking.query.filter_by(id=result['booking']['id']).one()
         assert booking.payment_status == 'paid'
         assert booking.status == 'confirmed'
-        assert booking.mpesa_receipt_number == 'STAY123ABC'
-        assert reserved_nights(room['id'], check_in, check_out) == {key: 1 for key in night_keys(check_in, check_out)}
+        assert booking.payment_method == 'paystack'
+        assert reserved_nights(room['id'], check_in, check_out) == {
+            key: 1 for key in night_keys(check_in, check_out)
+        }
+    status = stay['guest']['client'].get(
+        f"/api/payment-status/{result['payment_reference']}"
+    ).get_json()
+    assert status['document_urls']['receipt']
 
 
-def test_failed_callback_releases_stay_nights(stay, monkeypatch):
+# Paystack failure lifecycle
+
+
+def test_failed_paystack_callback_releases_stay_nights(stay, monkeypatch):
     room = stay['rooms']['double']
     check_in, check_out = stay_dates(45, 2)
     booking_data = book_stay(stay, room, check_in, check_out)
 
     with application.app.app_context():
         booking = application.db.session.get(application.Booking, booking_data['id'])
-        callback = _daraja_callback(booking, 1032)
-    monkeypatch.setattr(application, 'query_stk_push', lambda checkout_id: {
-        'ResponseCode': '0',
-        'ResultCode': '1032',
-        'CheckoutRequestID': checkout_id,
-        'ResultDesc': 'Request cancelled by the user.',
-    })
+        transaction = {
+            'reference': booking.paystack_reference,
+            'status': 'failed',
+            'currency': 'KES',
+            'amount': int(round(booking.amount)) * 100,
+            'channel': 'card',
+            'gateway_response': 'Card declined',
+        }
+        paystack_reference = booking.paystack_reference
+    monkeypatch.setattr(application, 'verify_paystack_transaction', lambda reference: transaction)
 
-    result = stay['guest']['client'].post('/daraja/callback', json=callback)
+    result = stay['guest']['client'].get(
+        '/paystack/callback', query_string={'reference': paystack_reference}
+    )
 
-    assert result.status_code == 204
+    assert result.status_code == 302
     with application.app.app_context():
         booking = application.db.session.get(application.Booking, booking_data['id'])
         assert booking.payment_status == 'failed'
@@ -737,14 +755,14 @@ def test_failed_callback_releases_stay_nights(stay, monkeypatch):
         assert reserved_nights(room['id'], check_in, check_out) == {key: 0 for key in night_keys(check_in, check_out)}
 
 
-def test_rejected_stk_push_releases_stay_nights(stay, monkeypatch):
+def test_rejected_paystack_initialization_releases_stay_nights(stay, monkeypatch):
     room = stay['rooms']['double']
     check_in, check_out = stay_dates(48, 2)
 
-    def reject_payment(phone, amount, booking_id):
-        raise application.DarajaError('The payment request was rejected.')
+    def reject_payment(**kwargs):
+        raise application.PaystackError('The payment request was rejected.')
 
-    monkeypatch.setattr(application, 'initiate_stk_push', reject_payment)
+    monkeypatch.setattr(application, 'initialize_paystack_transaction', reject_payment)
 
     response = stay['guest']['client'].post(
         '/booking-confirmation', json=stay_booking_payload(stay, room, check_in, check_out)

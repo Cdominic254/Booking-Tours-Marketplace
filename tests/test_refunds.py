@@ -355,48 +355,39 @@ def test_a_paid_refund_cannot_be_paid_twice(refund_scene, admin_client):
     assert second.status_code == 409
 
 
-def test_late_mpesa_payment_on_a_cancelled_booking_queues_a_refund(refund_scene, monkeypatch):
+def test_late_paystack_payment_on_a_cancelled_booking_queues_a_refund(refund_scene, monkeypatch):
+    reference = 'paystack-late-refund'
     booking_id = make_tour_booking(
         refund_scene,
         schedule='near',
         payment_status='pending',
         status='cancelled',
-        checkout_request_id='ws_CO_late_refund',
-        merchant_request_id='merchant_late_refund',
+        payment_method='paystack',
+        paystack_reference=reference,
+    )
+    transaction = {
+        'reference': reference,
+        'status': 'success',
+        'currency': 'KES',
+        'amount': 500000,
+        'channel': 'card',
+    }
+    monkeypatch.setattr(application, 'verify_paystack_transaction', lambda requested_reference: transaction)
+
+    response = refund_scene['client'].get(
+        '/paystack/callback', query_string={'reference': reference}
     )
 
-    monkeypatch.setattr(application, 'query_stk_push', lambda checkout_id: {
-        'ResponseCode': '0',
-        'ResultCode': 0,
-        'ResultDesc': 'The service request is processed successfully.',
-        'CheckoutRequestID': checkout_id,
-    })
-
-    response = refund_scene['client'].post('/daraja/callback', json={
-        'Body': {
-            'stkCallback': {
-                'MerchantRequestID': 'merchant_late_refund',
-                'CheckoutRequestID': 'ws_CO_late_refund',
-                'ResultCode': 0,
-                'ResultDesc': 'The service request is processed successfully.',
-                'CallbackMetadata': {
-                    'Item': [
-                        {'Name': 'Amount', 'Value': 5000},
-                        {'Name': 'MpesaReceiptNumber', 'Value': 'QAB123XYZ'},
-                        {'Name': 'PhoneNumber', 'Value': 254712345678},
-                    ],
-                },
-            },
-        },
-    })
-
-    assert response.status_code == 204
+    assert response.status_code == 302
     booking = read_booking(booking_id)
     assert booking['status'] == 'cancelled'
     assert booking['payment_status'] == 'paid'
+    assert booking['payment_method'] == 'paystack'
+    assert booking['payment_channel'] == 'card'
+    assert booking['paystack_reference'] == reference
+    assert booking['mpesa_receipt_number'] is None
     assert booking['refund_status'] == 'pending'
     assert booking['refund_amount'] == 5000
-    assert booking['mpesa_receipt_number'] == 'QAB123XYZ'
 
 
 def test_cancel_requires_csrf(refund_scene):

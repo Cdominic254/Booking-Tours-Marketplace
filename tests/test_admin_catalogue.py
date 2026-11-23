@@ -882,7 +882,7 @@ def test_vendor_can_view_and_advance_only_their_tour_bookings(monkeypatch, vendo
         headers=first_headers,
     )
     assert cancelled_response.status_code == 409
-    assert 'M-Pesa request' in cancelled_response.get_json()['error']
+    assert 'payment request' in cancelled_response.get_json()['error']
     with application.app.app_context():
         assert application.db.session.get(application.TourSchedule, cancelled_schedule_id).booked_count == 1
 

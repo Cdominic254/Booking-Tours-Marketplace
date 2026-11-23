@@ -263,7 +263,7 @@ def build_story(width):
         callout([p(
             f'{BRAND_NAME} is a Kenya-wide travel marketplace for tours, safaris, and stays. '
             'Travellers discover and compare experiences across the country\'s destinations, check '
-            'real availability, and pay by M-Pesa; partners publish and manage their own inventory '
+            'real availability, and pay through Paystack from Kenya or abroad; partners publish and manage their own inventory '
             'from a self-service portal; administrators run the marketplace, settle refunds, and read '
             f'the revenue picture. The platform is deployed and operating in production under the '
             f'{BRAND_SLOGAN} identity, not sitting in a prototype.',
@@ -327,10 +327,10 @@ def build_story(width):
          'A persistent booking with a status timeline, a cancellation window enforced in code, and '
          'downloadable payment documents.'],
         ['Payment is unverified',
-         'A forwarded M-Pesa screenshot proves nothing: the amount, the paying number, and the receipt '
-         'can all be wrong or reused.',
-         'Daraja STK Push to the guest\'s phone, then a callback plus a server-side STK Query that '
-         'verifies amount, phone number, and receipt before a booking is marked paid.'],
+         'A forwarded payment screenshot proves nothing: the amount, payer, and reference can all be '
+         'wrong or reused.',
+         'Paystack hosted checkout for domestic and international guests, with server-side verification '
+         'of the reference, KES currency, and exact amount before a booking is marked paid.'],
         ['Operators have no tooling',
          'Prices, photos, and itineraries live in someone\'s phone, so every price change restarts the '
          'same conversation.',
@@ -359,7 +359,7 @@ def build_story(width):
         'price, and reviews. They can compare listings, save a wishlist, read the community gallery and '
         'blog, and ask for a plan for a multi-day trip. At checkout they pick a published departure '
         'date or a range of nights, choose party size within remaining capacity, see the exact fee '
-        'breakdown, and pay by M-Pesa. The interface works in English and Kiswahili and converts '
+        'breakdown, and pay through Paystack. The interface works in English and Kiswahili and converts '
         'prices into the visitor\'s currency.'
     ))
     story.append(data_table([
@@ -452,8 +452,9 @@ def build_story(width):
          'Properties and rooms, date-range availability, nightly pricing, and stay bookings alongside '
          'tours in the same cart and payment flow.'],
         ['Payments',
-         'Safaricom Daraja STK Push, callback handling, server-side STK Query verification, payment '
-         'status polling, downloadable payment documents, and a refund queue.'],
+         'Paystack hosted checkout for domestic and international payments, callback and signed webhook '
+         'handling, server-side transaction verification, payment status polling, downloadable payment '
+         'documents, and a refund queue.'],
         ['Partner portal',
          'Registration, listings, rooms, availability, booking status management, subscription '
          'renewal, and image upload.'],
@@ -490,7 +491,7 @@ def build_story(width):
         ('2. Evaluate', 'photos, reviews'),
         ('3. Select', 'date or nights'),
         ('4. Reserve', 'capacity held'),
-        ('5. Pay', 'M-Pesa STK'),
+        ('5. Pay', 'Paystack checkout'),
         ('6. Confirm', 'verified'),
         ('7. Travel', 'partner fulfils'),
     ], width))
@@ -504,11 +505,12 @@ def build_story(width):
         '<b>Reserve.</b> The system revalidates date, price, and availability, then reserves the seats '
         'or room nights so concurrent buyers cannot oversell them.',
         '<b>Pay.</b> The fee breakdown appears before payment: listing subtotal, guest service fee, and '
-        'the flat booking fee. Payment is requested through Daraja STK Push to the guest\'s phone.',
-        '<b>Verify.</b> The booking is marked paid only when the callback and an STK Query agree on the '
-        'amount, phone number, and receipt. A browser redirect is never treated as proof of payment.',
+        'the flat booking fee. Domestic and international guests continue to Paystack\'s secure hosted '
+        'checkout, with the transaction initialized in Kenyan shillings.',
+        '<b>Verify.</b> The booking is marked paid only after Paystack confirms the reference, KES '
+        'currency, and exact amount. A browser redirect is never treated as proof of payment.',
         '<b>Confirm and notify.</b> The booking becomes confirmed and an email is sent when SMTP is '
-        'configured. A failed or timed-out payment releases the held inventory.',
+        'configured. A failed or abandoned payment releases the held inventory.',
         '<b>Change plans.</b> Customers cancel or reschedule from their account until the cancellation '
         'window closes, 48 hours before departure or check-in by default. Cancelling a paid booking '
         'releases inventory and queues a full refund for administrator payout.',
@@ -598,7 +600,7 @@ def build_story(width):
         ['Data layer',
          'PostgreSQL holds every entity; Redis holds rate-limit counters shared by all instances.'],
         ['External services',
-         'Daraja for payments, an exchange-rate provider for currency display, and SMTP for '
+         'Paystack for payments, an exchange-rate provider for currency display, and SMTP for '
          'notifications.'],
     ], [width * 0.2, width * 0.8]))
 
@@ -615,11 +617,11 @@ def build_story(width):
     story += bullets([
         'Capacity is claimed inside the database transaction that creates the booking, so two '
         'travellers cannot be sold the same seat or room night.',
-        'A booking starts pending and only becomes paid once Daraja\'s callback and an independent STK '
-        'Query agree on amount, payer, and receipt.',
-        'Payment references and checkout identifiers carry uniqueness constraints, so one M-Pesa '
-        'receipt cannot settle two bookings.',
-        'Failures and timeouts release the held inventory automatically rather than requiring an '
+        'A booking starts pending and only becomes paid after Paystack verifies the transaction '
+        'reference, KES currency, and exact amount.',
+        'Paystack references carry uniqueness constraints, so one verified transaction cannot settle '
+        'two bookings or extend a partner subscription twice.',
+        'Failed and abandoned payments release held inventory automatically rather than requiring an '
         'administrator to clean up.',
         'Cancellation inside the window is refused; outside it, inventory is released and a refund '
         'record is queued with status, amount, reason, and payout timestamps.',
@@ -670,8 +672,9 @@ def build_story(width):
         ['Rate limiting', 'Flask-Limiter 4.1 over Redis (Upstash)',
          'Shared counters so limits hold across serverless instances, falling back to memory locally.'],
         ['Web server', 'Gunicorn 26.2', 'Application server for non-serverless runs.'],
-        ['Payments', 'Safaricom Daraja',
-         'Lipa na M-Pesa Online for STK Push, plus STK Query for independent verification.'],
+        ['Payments', 'Paystack',
+         'Hosted checkout in KES for domestic and international guests, with signed webhooks and '
+         'server-side transaction verification.'],
         ['Documents', 'ReportLab 4.5',
          'Payment documents generated server-side as PDFs, and this proposal.'],
         ['Hosting', 'Vercel',
@@ -709,7 +712,7 @@ def build_story(width):
                      'which injects DATABASE_* variables.'],
         ['Cache', 'Upstash Redis connected the same way, injecting RATELIMIT_STORAGE_* variables; the '
                   'app also accepts the plain REDIS_URL and KV_URL names.'],
-        ['Secrets', 'Session secret, database URL, Redis URL, Daraja credentials, and SMTP settings are '
+        ['Secrets', 'Session secret, database URL, Redis URL, Paystack keys, and SMTP settings are '
                     'project environment variables for Production and Preview.'],
         ['Region choice', 'Functions and database share fra1, so each query is a local round trip '
                           'instead of crossing an ocean per statement.'],
@@ -752,10 +755,11 @@ def build_story(width):
     ))
     story.append(data_table([
         ['Item', 'Why it matters', 'Where it stands'],
-        ['Live M-Pesa credentials',
-         'No real payment can be taken until Daraja is configured, so bookings stay unpaid.',
-         'Integration complete and tested in sandbox; no DARAJA_* variables are set on the deployment '
-         'yet.'],
+        ['Live Paystack configuration',
+         'No real payment can be taken until live Paystack keys and public callback/webhook URLs are '
+         'configured. International cards also require international acceptance on the Paystack account.',
+         'Integration complete and tested with Paystack test keys; production PAYSTACK_* variables and '
+         'account settings still need to be confirmed.'],
         ['Transactional email',
          'Customers get no confirmation or refund emails, and admin notifications do not send.',
          'SMTP support is built; EMAIL_* variables are not set on the deployment.'],
